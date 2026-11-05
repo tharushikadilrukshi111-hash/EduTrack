@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -14,227 +15,343 @@ import {
 } from "react-native";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
-const COLORS = {
-  navy: "#15375E",
-  teal: "#087F8C",
-  background: "#F4F7FB",
-  white: "#FFFFFF",
-  muted: "#657992",
-  border: "#D8E4EF",
-  error: "#BA3543",
-  errorBg: "#FFF0F1",
-  success: "#16825B",
+const BLUE = "#173B64";
+const TEAL = "#078692";
+
+const ROLES = {
+  student: {
+    title: "Student sign in",
+    label: "Registration no. or email",
+    hint: "ET-2026-0142",
+    help: "First visit? Activate your student account",
+  },
+  teacher: {
+    title: "Educator sign in",
+    label: "Email address",
+    hint: "teacher@example.com",
+    help: "New educator? Create an account",
+  },
+  parent: {
+    title: "Parent sign in",
+    label: "Email address",
+    hint: "parent@example.com",
+    help: "Need access? Contact your educator",
+  },
+  admin: {
+    title: "Admin sign in",
+    label: "Work email",
+    hint: "admin@example.com",
+    help: "Administrator access is by invitation",
+  },
 };
 
+function Button({ title, onPress, disabled = false, light = false }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      style={[
+        styles.button,
+        light && styles.lightButton,
+        disabled && { opacity: 0.6 },
+      ]}
+    >
+      <Text style={[styles.buttonText, light && { color: BLUE }]}>{title}</Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function App() {
+  const [page, setPage] = useState("welcome");
   const [role, setRole] = useState("student");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [visible, setVisible] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [session, setSession] = useState(null);
+  const [user, setUser] = useState(null);
 
-  function changeRole(nextRole) {
+  function chooseRole(nextRole) {
     setRole(nextRole);
     setIdentifier("");
     setPassword("");
     setError("");
+    setVisible(false);
+    setPage("login");
   }
 
-  async function login() {
+  async function signIn() {
     setError("");
-    if (!identifier.trim()) {
-      setError(
-        role === "student"
-          ? "Registration number is required."
-          : "Email address is required.",
+    const id = identifier.trim();
+
+    if (!id || !password) {
+      return setError("Please enter your login details and password.");
+    }
+
+    if (
+      (role !== "student" || id.includes("@")) &&
+      !/^\S+@\S+\.\S+$/.test(id)
+    ) {
+      return setError("Please enter a valid email address.");
+    }
+
+    if (password.length < 8) {
+      return setError("Password must have at least 8 characters.");
+    }
+
+    if (role === "parent" || role === "admin") {
+      return setError(
+        "This login screen is ready. Backend access for this role is not added yet.",
       );
-      return;
     }
-    if (role === "teacher" && !/^\S+@\S+\.\S+$/.test(identifier.trim())) {
-      setError("Please enter a valid email address.");
-      return;
-    }
-    if (!password) {
-      setError("Password is required.");
-      return;
-    }
+
     if (!API_URL) {
-      setError("API address is not configured. Check mobile/.env.");
-      return;
+      return setError("Set EXPO_PUBLIC_API_URL in mobile/.env first.");
     }
+
     setLoading(true);
+
     try {
-      const res = await fetch(`${API_URL}/api/auth/login`, {
+      const response = await fetch(`${API_URL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, identifier: identifier.trim(), password }),
+        body: JSON.stringify({
+          role,
+          identifier: id,
+          password,
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.message || "Unable to sign in. Please try again.");
-        return;
+
+      const data = await response.json();
+
+      if (!response.ok || !data.token || !data.user) {
+        setError(data.message || "Sign in failed. Check your details.");
+      } else {
+        setUser(data.user);
+        setPage("dashboard");
       }
-      // Token is kept only in memory for this first evaluation milestone.
-      setSession({ user: data.user, token: data.token });
-    } catch (_error) {
-      setError(
-        "Cannot connect to the server. Check Wi-Fi, PC IP and backend status.",
-      );
+    } catch {
+      setError("Cannot reach the backend. Check Wi-Fi, IP address and server.");
     } finally {
       setLoading(false);
     }
   }
 
-  if (session) {
-    const isTeacher = session.user.role === "teacher";
-    return (
-      <SafeAreaView style={styles.safe}>
-        <StatusBar
-          barStyle="dark-content"
-          backgroundColor={COLORS.background}
-        />
-        <View style={styles.homeContainer}>
-          <Text style={styles.wordmark}>EDUTRACK</Text>
-          <Text style={styles.title}>
-            {isTeacher ? "Teacher dashboard" : "Student dashboard"}
-          </Text>
-          <Text style={styles.subtitle}>Welcome, {session.user.name}!</Text>
-          <View style={styles.card}>
-            <Text style={styles.badge}>✓ Login successful</Text>
-            <Text style={styles.cardTitle}>
-              {isTeacher
-                ? "Manage your tuition classes"
-                : "Your learning journey starts here"}
-            </Text>
-            <Text style={styles.cardText}>
-              {isTeacher
-                ? "Student registration, quizzes and class reports are the next modules."
-                : "Your enrolled classes, quizzes and progress will appear here."}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.button}
-            onPress={() => {
-              setSession(null);
-              setPassword("");
-            }}
-          >
-            <Text style={styles.buttonText}>Log out</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const info = ROLES[role];
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" backgroundColor={COLORS.background} />
+      <StatusBar barStyle="dark-content" />
+
       <KeyboardAvoidingView
-        style={styles.flex}
+        style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={styles.wordmark}>EDUTRACK</Text>
-          <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.subtitle}>
-            Sign in to continue your learning journey
-          </Text>
+          {page === "welcome" && (
+            <View>
+              <Text style={styles.tag}>EDUTRACK · LEARN. PRACTISE. GROW.</Text>
 
-          <View style={styles.roleSwitch}>
-            {["student", "teacher"].map((option) => (
-              <TouchableOpacity
-                key={option}
-                style={[
-                  styles.roleTab,
-                  role === option && styles.activeRoleTab,
-                ]}
-                onPress={() => changeRole(option)}
-              >
-                <Text
-                  style={[
-                    styles.roleText,
-                    role === option && styles.activeRoleText,
-                  ]}
-                >
-                  {option === "teacher" ? "Teacher" : "Student"}
+              <Text style={styles.title}>Learn with confidence</Text>
+
+              <View style={styles.art}>
+                <Text style={{ fontSize: 92 }}>📖</Text>
+                <Text style={styles.artCheck}>✓</Text>
+              </View>
+
+              <Text style={styles.bigTitle}>
+                A little practice.{"\n"}A clearer path ahead.
+              </Text>
+
+              <Text style={styles.muted}>
+                Quizzes, class notes and meaningful progress — together in
+                EduTrack.
+              </Text>
+
+              <Button title="Get started" onPress={() => setPage("roles")} />
+
+              <Text style={styles.small}>
+                Built for students, educators and families.
+              </Text>
+            </View>
+          )}
+
+          {page === "roles" && (
+            <View>
+              <Text style={styles.back} onPress={() => setPage("welcome")}>
+                ‹ WELCOME
+              </Text>
+
+              <Text style={styles.title}>Your learning space</Text>
+              <Text style={styles.muted}>Choose how you use EduTrack.</Text>
+
+              <View style={styles.studentCard}>
+                <Text style={styles.whiteSmall}>FOR LEARNERS</Text>
+
+                <Text style={styles.studentTitle}>
+                  Make progress, every day.
                 </Text>
+
+                <Text style={styles.whiteSmall}>
+                  Take quizzes, revisit feedback and build confidence.
+                </Text>
+
+                <Button
+                  title="I'm a student"
+                  light
+                  onPress={() => chooseRole("student")}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={styles.roleCard}
+                onPress={() => chooseRole("teacher")}
+              >
+                <Text style={styles.cardTitle}>Teacher / Lecturer</Text>
+                <Text style={styles.muted}>
+                  Teach, assess and support your classes.
+                </Text>
+                <Text style={styles.link}>Continue as educator ›</Text>
               </TouchableOpacity>
-            ))}
-          </View>
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>
-              {role === "student" ? "Student sign in" : "Teacher sign in"}
-            </Text>
-            <Text style={styles.cardText}>
-              Enter your registered account details
-            </Text>
+              <TouchableOpacity
+                style={styles.roleCard}
+                onPress={() => chooseRole("parent")}
+              >
+                <Text style={styles.cardTitle}>Parent / Guardian</Text>
+                <Text style={styles.muted}>
+                  Follow your linked child's learning.
+                </Text>
+                <Text style={styles.link}>Continue as parent ›</Text>
+              </TouchableOpacity>
 
-            <Text style={styles.label}>
-              {role === "student" ? "Registration number" : "Email address"}
-            </Text>
-            <TextInput
-              style={styles.input}
-              value={identifier}
-              onChangeText={setIdentifier}
-              placeholder={
-                role === "student" ? "e.g. STU-1001" : "name@example.com"
-              }
-              placeholderTextColor={COLORS.muted}
-              keyboardType={role === "teacher" ? "email-address" : "default"}
-              autoCapitalize={role === "teacher" ? "none" : "characters"}
-              autoCorrect={false}
-            />
+              <Text style={styles.link} onPress={() => chooseRole("admin")}>
+                Administrator access
+              </Text>
+            </View>
+          )}
 
-            <Text style={styles.label}>Password</Text>
-            <View style={styles.passwordContainer}>
+          {page === "login" && (
+            <View>
+              <Text
+                style={styles.back}
+                onPress={() => {
+                  setError("");
+                  setPage("roles");
+                }}
+              >
+                ‹ SECURE ACCESS
+              </Text>
+
+              <Text style={styles.title}>{info.title}</Text>
+              <Text style={styles.link}>{role.toUpperCase()}</Text>
+
+              <Text style={styles.muted}>
+                Welcome back. Continue where you left off.
+              </Text>
+
+              {!!error && (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorTitle}>Sign-in unsuccessful</Text>
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              )}
+
+              <Text style={styles.fieldLabel}>{info.label}</Text>
               <TextInput
-                style={styles.passwordInput}
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Enter password"
-                placeholderTextColor={COLORS.muted}
-                secureTextEntry={!showPassword}
+                style={styles.input}
+                placeholder={info.hint}
+                value={identifier}
                 autoCapitalize="none"
                 autoCorrect={false}
+                keyboardType={role === "student" ? "default" : "email-address"}
+                onChangeText={setIdentifier}
               />
-              <TouchableOpacity
-                onPress={() => setShowPassword((v) => !v)}
-                accessibilityLabel="Toggle password visibility"
+
+              <Text style={styles.fieldLabel}>Password</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your password"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!visible}
+                autoCapitalize="none"
+              />
+
+              <Text style={styles.small}>At least 8 characters</Text>
+
+              <Text style={styles.link} onPress={() => setVisible(!visible)}>
+                {visible ? "Hide password" : "Show password"}
+              </Text>
+
+              <Text
+                style={styles.link}
+                onPress={() =>
+                  Alert.alert(
+                    "Coming soon",
+                    "Password recovery needs a backend endpoint.",
+                  )
+                }
               >
-                <Text style={styles.showText}>
-                  {showPassword ? "Hide" : "Show"}
-                </Text>
-              </TouchableOpacity>
-            </View>
+                Forgot password?
+              </Text>
 
-            {!!error && (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{error}</Text>
+              <View style={{ marginTop: 14 }}>
+                {loading ? (
+                  <ActivityIndicator color={TEAL} />
+                ) : (
+                  <Button title="Sign in" onPress={signIn} />
+                )}
               </View>
-            )}
 
-            <TouchableOpacity
-              style={[styles.button, loading && styles.disabled]}
-              onPress={login}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color={COLORS.white} />
-              ) : (
-                <Text style={styles.buttonText}>Log in as {role}</Text>
-              )}
-            </TouchableOpacity>
-            <Text style={styles.hint}>
-              Your account must be registered by an authorized user.
-            </Text>
-          </View>
-          <Text style={styles.footer}>EduTrack • Learn • Quiz • Grow</Text>
+              <Text
+                style={styles.link}
+                onPress={() =>
+                  Alert.alert(
+                    "Coming soon",
+                    "Account activation/registration will be implemented next.",
+                  )
+                }
+              >
+                {info.help}
+              </Text>
+            </View>
+          )}
+
+          {page === "dashboard" && (
+            <View>
+              <Text style={styles.tag}>EDUTRACK</Text>
+
+              <Text style={styles.bigTitle}>
+                {user?.role === "teacher"
+                  ? "Teacher dashboard"
+                  : "Student dashboard"}
+              </Text>
+
+              <Text style={styles.muted}>
+                Welcome, {user?.name || "EduTrack user"}!
+              </Text>
+
+              <View style={styles.roleCard}>
+                <Text style={styles.cardTitle}>✓ Login successful</Text>
+                <Text style={styles.muted}>
+                  Your full dashboard will be built next.
+                </Text>
+              </View>
+
+              <Button
+                title="Log out"
+                onPress={() => {
+                  setUser(null);
+                  setPassword("");
+                  setPage("welcome");
+                }}
+              />
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -242,127 +359,157 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  safe: { flex: 1, backgroundColor: COLORS.background },
+  safe: {
+    flex: 1,
+    backgroundColor: "#F4F7FB",
+  },
   scroll: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 50,
-    paddingBottom: 34,
-    justifyContent: "center",
+    paddingTop: 42,
+    paddingBottom: 40,
+    maxWidth: 460,
+    width: "100%",
+    alignSelf: "center",
   },
-  wordmark: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: COLORS.teal,
-    letterSpacing: 2,
-    marginBottom: 18,
-  },
-  title: {
-    fontSize: 30,
-    fontWeight: "800",
-    color: COLORS.navy,
+  tag: {
+    color: TEAL,
+    fontSize: 11,
+    fontWeight: "700",
     marginBottom: 10,
   },
-  subtitle: {
-    fontSize: 15,
-    lineHeight: 23,
-    color: COLORS.muted,
-    marginBottom: 28,
-  },
-  roleSwitch: {
-    backgroundColor: "#E7EEF5",
-    borderRadius: 15,
-    flexDirection: "row",
-    padding: 5,
-    marginBottom: 22,
-  },
-  roleTab: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 13,
-    borderRadius: 11,
-  },
-  activeRoleTab: { backgroundColor: COLORS.navy },
-  roleText: { fontSize: 15, fontWeight: "700", color: COLORS.navy },
-  activeRoleText: { color: COLORS.white },
-  card: {
-    padding: 22,
-    backgroundColor: COLORS.white,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "#E6EDF5",
-  },
-  cardTitle: {
-    fontSize: 21,
+  title: {
+    color: BLUE,
+    fontSize: 25,
     fontWeight: "800",
-    color: COLORS.navy,
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  cardText: {
+  bigTitle: {
+    color: BLUE,
+    fontSize: 27,
+    fontWeight: "800",
+    marginBottom: 12,
+  },
+  muted: {
+    color: "#718198",
     fontSize: 13,
-    color: COLORS.muted,
-    marginBottom: 24,
-    lineHeight: 19,
+    lineHeight: 21,
+    marginBottom: 18,
   },
-  label: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: COLORS.navy,
-    marginBottom: 8,
+  small: {
+    color: "#718198",
+    fontSize: 11,
+    marginTop: 8,
+    marginBottom: 9,
   },
-  input: {
-    height: 53,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    marginBottom: 19,
-    fontSize: 15,
-    color: COLORS.navy,
-  },
-  passwordContainer: {
-    height: 53,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    flexDirection: "row",
+  art: {
+    backgroundColor: BLUE,
+    borderRadius: 20,
+    height: 215,
+    marginVertical: 20,
     alignItems: "center",
-    marginBottom: 14,
-  },
-  passwordInput: { flex: 1, fontSize: 15, color: COLORS.navy },
-  showText: { color: COLORS.teal, fontWeight: "700", padding: 8 },
-  errorBox: {
-    backgroundColor: COLORS.errorBg,
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 14,
-  },
-  errorText: { color: COLORS.error, fontSize: 13, lineHeight: 19 },
-  button: {
-    height: 52,
-    borderRadius: 13,
-    backgroundColor: COLORS.teal,
     justifyContent: "center",
+  },
+  artCheck: {
+    position: "absolute",
+    bottom: 33,
+    right: 65,
+    color: "#FFFFFF",
+    backgroundColor: "#25B8A7",
+    overflow: "hidden",
+    borderRadius: 20,
+    fontSize: 25,
+    paddingHorizontal: 9,
+  },
+  button: {
+    backgroundColor: TEAL,
+    paddingVertical: 16,
+    borderRadius: 10,
     alignItems: "center",
+    marginTop: 9,
+  },
+  buttonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  lightButton: {
+    backgroundColor: "#DFF6F8",
+  },
+  back: {
+    color: TEAL,
+    fontWeight: "700",
+    marginBottom: 18,
     marginTop: 8,
   },
-  buttonText: { color: COLORS.white, fontSize: 16, fontWeight: "800" },
-  disabled: { opacity: 0.65 },
-  hint: {
-    textAlign: "center",
-    color: COLORS.muted,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 16,
+  studentCard: {
+    backgroundColor: BLUE,
+    borderRadius: 18,
+    padding: 20,
+    marginBottom: 15,
   },
-  footer: {
-    textAlign: "center",
-    marginTop: 30,
-    color: COLORS.muted,
-    fontSize: 12,
+  studentTitle: {
+    color: "#FFFFFF",
+    fontSize: 23,
+    fontWeight: "800",
+    marginVertical: 11,
   },
-  homeContainer: { flex: 1, justifyContent: "center", paddingHorizontal: 24 },
-  badge: { color: COLORS.success, fontWeight: "800", marginBottom: 14 },
+  whiteSmall: {
+    color: "#E0F1FA",
+    fontSize: 12,
+    lineHeight: 19,
+    marginBottom: 8,
+  },
+  roleCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#DEE7EF",
+    padding: 17,
+    marginBottom: 13,
+  },
+  cardTitle: {
+    color: BLUE,
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 8,
+  },
+  link: {
+    color: TEAL,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  fieldLabel: {
+    color: BLUE,
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 12,
+    marginBottom: 7,
+  },
+  input: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#DEE7EF",
+    paddingHorizontal: 13,
+    borderRadius: 10,
+    height: 49,
+  },
+  errorBox: {
+    backgroundColor: "#FFF0F1",
+    borderRadius: 10,
+    padding: 13,
+    marginVertical: 13,
+  },
+  errorTitle: {
+    color: "#B52C40",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  errorText: {
+    color: "#B52C40",
+    fontSize: 12,
+    marginTop: 5,
+  },
 });
