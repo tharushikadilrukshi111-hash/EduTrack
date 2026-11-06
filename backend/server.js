@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const User = require('./models/User');
+const { requireAuth, requireRole } = require('./middleware/auth');
 
 const app = express();
 
@@ -77,6 +78,33 @@ app.post('/api/auth/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error.message);
+
+    res.status(500).json({
+      message: 'Server error. Try again later.'
+    });
+  }
+});
+
+app.get('/api/teacher/dashboard', requireAuth, requireRole('teacher'), async (req, res) => {
+  try {
+    const user = await User.findById(req.user.sub).select('name role identifier');
+
+    if (!user) {
+      return res.status(404).json({
+        message: 'Teacher account not found.'
+      });
+    }
+
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        identifier: user.identifier
+      }
+    });
+  } catch (error) {
+    console.error('Teacher dashboard error:', error.message);
 
     res.status(500).json({
       message: 'Server error. Try again later.'
