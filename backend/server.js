@@ -85,6 +85,33 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.get('/api/auth/me', requireAuth, async (req, res) => {
+  try {
+    const subject = req.user?.sub;
+    if (typeof subject !== 'string' || !/^[a-fA-F0-9]{24}$/.test(subject)) {
+      return res.status(401).json({ message: 'Invalid session.' });
+    }
+
+    const user = await User.findById(subject).select('name role identifier');
+
+    if (!user || !['student', 'teacher'].includes(user.role)) {
+      return res.status(401).json({ message: 'Account unavailable. Please sign in again.' });
+    }
+
+    res.json({
+      user: {
+        id: user.id,
+        name: user.name,
+        role: user.role,
+        identifier: user.identifier
+      }
+    });
+  } catch (error) {
+    console.error('Session verification error:', error.message);
+    res.status(500).json({ message: 'Server error. Try again later.' });
+  }
+});
+
 app.get('/api/teacher/dashboard', requireAuth, requireRole('teacher'), async (req, res) => {
   try {
     const user = await User.findById(req.user.sub).select('name role identifier');
