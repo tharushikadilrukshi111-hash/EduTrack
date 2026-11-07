@@ -2,7 +2,9 @@ require('dotenv').config();
 
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+
 const User = require('./models/User');
+const Student = require('./models/Student');
 
 async function main() {
   const accounts = [
@@ -40,7 +42,7 @@ async function main() {
   for (const account of accounts) {
     const passwordHash = await bcrypt.hash(account.password, 12);
 
-    await User.updateOne(
+    const user = await User.findOneAndUpdate(
       { identifier: account.identifier },
       {
         $set: {
@@ -51,17 +53,38 @@ async function main() {
           passwordHash
         }
       },
-      { upsert: true,
-        runValidators: true }
+      {
+        upsert: true,
+        returnDocument: 'after',
+        runValidators: true
+      }
     );
 
-    console.log(`${account.role} account ready`);
+    if (account.role === 'student') {
+      await Student.updateOne(
+        { userId: user._id },
+        {
+          $set: {
+            registrationNumber: account.identifier
+          }
+        },
+        {
+          upsert: true,
+          runValidators: true
+        }
+      );
+
+      console.log('Student account and profile ready');
+    } else {
+      console.log(`${account.role} account ready`);
+    }
   }
 
   await mongoose.disconnect();
 }
 
-main().catch(error => {
+main().catch(async error => {
   console.error(error.message);
+  await mongoose.disconnect();
   process.exit(1);
 });
