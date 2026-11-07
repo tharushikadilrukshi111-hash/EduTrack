@@ -125,7 +125,9 @@ export default function App() {
       const data = await response.json();
 
       if (!response.ok || !data.token || !data.user) {
-        setError(data.message || "Sign in failed. Check your details.");
+        setError(data.message || "Sign in failed.");
+      } else if (data.user.role !== role) {
+        setError("This account cannot access the selected role.");
       } else {
         setUser(data.user);
         setPage("dashboard");
@@ -321,7 +323,7 @@ export default function App() {
             </View>
           )}
 
-          {page === "dashboard" && (
+          {page === "dashboard" && user && user.role === role && (
             <View>
               <Text style={styles.tag}>EDUTRACK</Text>
 
