@@ -51,7 +51,8 @@ async function main() {
           passwordHash
         }
       },
-      { upsert: true }
+      { upsert: true,
+        runValidators: true }
     );
 
     console.log(`${account.role} account ready`);
