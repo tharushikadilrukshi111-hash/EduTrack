@@ -147,6 +147,7 @@ export default function App() {
   function chooseRole(nextRole) {
     setTeacherData(null);
     setTeacherError("");
+    setTeacherLoading(false);
     setRole(nextRole);
     setIdentifier("");
     setPassword("");
@@ -222,6 +223,8 @@ export default function App() {
       return;
     }
 
+    const check = sessionCheck.current;
+    const isCurrent = () => check === sessionCheck.current;
     setTeacherData(null);
     setTeacherError("");
     setTeacherLoading(true);
@@ -236,9 +239,12 @@ export default function App() {
       try {
         token = await SecureStore.getItemAsync("edutrack_token");
       } catch {
-        setTeacherError("Could not read your saved session. Please try again.");
+        if (isCurrent()) {
+          setTeacherError("Could not read your saved session. Please try again.");
+        }
         return;
       }
+      if (!isCurrent()) return;
 
       if (!token) {
         setTeacherError("No saved session found. Please log out and sign in again.");
@@ -249,9 +255,23 @@ export default function App() {
         method: "GET",
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (!isCurrent()) return;
 
       if (response.status === 401) {
-        setTeacherError("Your session is invalid or expired. Please log out and sign in again.");
+        try {
+          await SecureStore.deleteItemAsync("edutrack_token");
+        } catch {
+          if (isCurrent()) {
+            setTeacherError("Your session expired, but the saved token could not be removed securely. Please retry or log out.");
+          }
+          return;
+        }
+        if (!isCurrent()) return;
+        setUser(null);
+        setPassword("");
+        setTeacherData(null);
+        setPage("welcome");
+        Alert.alert("Session expired", "Your session is no longer authorized. Please sign in again.");
         return;
       }
       if (response.status === 403) {
@@ -260,6 +280,7 @@ export default function App() {
       }
 
       const data = await response.json();
+      if (!isCurrent()) return;
       if (!response.ok) {
         setTeacherError(data.message || "Could not load Teacher data.");
       } else if (!data.user || data.user.role !== "teacher" || data.user.id !== user.id) {
@@ -268,9 +289,11 @@ export default function App() {
         setTeacherData(data.user);
       }
     } catch {
-      setTeacherError("Could not load Teacher data. Check your connection and backend, then try again.");
+      if (isCurrent()) {
+        setTeacherError("Could not load Teacher data. Check your connection and backend, then try again.");
+      }
     } finally {
-      setTeacherLoading(false);
+      if (isCurrent()) setTeacherLoading(false);
     }
   }
 
@@ -525,6 +548,7 @@ export default function App() {
                 title="Log out"
                 onPress={async () => {
                   sessionCheck.current += 1;
+                  setTeacherLoading(false);
                   try {
                     await SecureStore.deleteItemAsync("edutrack_token");
                     setUser(null);
