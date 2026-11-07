@@ -71,8 +71,13 @@ export default function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
+  const [teacherData, setTeacherData] = useState(null);
+  const [teacherLoading, setTeacherLoading] = useState(false);
+  const [teacherError, setTeacherError] = useState("");
 
   function chooseRole(nextRole) {
+    setTeacherData(null);
+    setTeacherError("");
     setRole(nextRole);
     setIdentifier("");
     setPassword("");
@@ -139,6 +144,63 @@ export default function App() {
       setError("Cannot reach the backend. Check Wi-Fi, IP address and server.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadTeacherData() {
+    if (role !== "teacher" || user?.role !== "teacher" || teacherLoading) {
+      return;
+    }
+
+    setTeacherData(null);
+    setTeacherError("");
+    setTeacherLoading(true);
+
+    try {
+      if (!API_URL) {
+        setTeacherError("Set EXPO_PUBLIC_API_URL in mobile/.env first.");
+        return;
+      }
+
+      let token;
+      try {
+        token = await SecureStore.getItemAsync("edutrack_token");
+      } catch {
+        setTeacherError("Could not read your saved session. Please try again.");
+        return;
+      }
+
+      if (!token) {
+        setTeacherError("No saved session found. Please log out and sign in again.");
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/api/teacher/dashboard`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (response.status === 401) {
+        setTeacherError("Your session is invalid or expired. Please log out and sign in again.");
+        return;
+      }
+      if (response.status === 403) {
+        setTeacherError("Access denied. A Teacher account is required.");
+        return;
+      }
+
+      const data = await response.json();
+      if (!response.ok) {
+        setTeacherError(data.message || "Could not load Teacher data.");
+      } else if (!data.user || data.user.role !== "teacher" || data.user.id !== user.id) {
+        setTeacherError("The backend returned unexpected Teacher data.");
+      } else {
+        setTeacherData(data.user);
+      }
+    } catch {
+      setTeacherError("Could not load Teacher data. Check your connection and backend, then try again.");
+    } finally {
+      setTeacherLoading(false);
     }
   }
 
@@ -346,6 +408,27 @@ export default function App() {
                   Your full dashboard will be built next.
                 </Text>
               </View>
+
+              {role === "teacher" && user.role === "teacher" && (
+                <View style={styles.roleCard}>
+                  <Button
+                    title="Load Teacher Data"
+                    onPress={loadTeacherData}
+                    disabled={teacherLoading}
+                  />
+                  {teacherLoading && <ActivityIndicator color={TEAL} />}
+                  {!!teacherError && (
+                    <Text style={styles.errorText}>{teacherError}</Text>
+                  )}
+                  {teacherData && teacherData.id === user.id && (
+                    <View>
+                      <Text style={styles.cardTitle}>{teacherData.name}</Text>
+                      <Text style={styles.muted}>Role: {teacherData.role}</Text>
+                      <Text style={styles.muted}>Identifier: {teacherData.identifier}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
 
               <Button
                 title="Log out"
