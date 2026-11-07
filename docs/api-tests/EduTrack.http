@@ -1,0 +1,50 @@
+@baseUrl = http://localhost:5000
+@studentIdentifier = {{$dotenv STUDENT_IDENTIFIER}}
+@studentPassword = {{$dotenv STUDENT_PASSWORD}}
+@teacherIdentifier = {{$dotenv TEACHER_IDENTIFIER}}
+@teacherPassword = {{$dotenv TEACHER_PASSWORD}}
+
+### Health: expect 200, status ok, database connected
+# @name health
+GET {{baseUrl}}/api/health
+Accept: application/json
+
+### Student login: expect 200, token and user.role student
+# @name studentLogin
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "role": "student",
+  "identifier": "{{studentIdentifier}}",
+  "password": "{{studentPassword}}"
+}
+
+### Teacher login: expect 200, token and user.role teacher
+# @name teacherLogin
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "role": "teacher",
+  "identifier": "{{teacherIdentifier}}",
+  "password": "{{teacherPassword}}"
+}
+
+### Validate Student: send Student login successfully first
+# @name studentMe
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{studentLogin.response.body.$.token}}
+Accept: application/json
+
+### Validate Teacher: send Teacher login successfully first
+# @name teacherMe
+GET {{baseUrl}}/api/auth/me
+Authorization: Bearer {{teacherLogin.response.body.$.token}}
+Accept: application/json
+
+### Protected Teacher API: expect 200 and user.role teacher
+# @name teacherDashboard
+GET {{baseUrl}}/api/teacher/dashboard
+Authorization: Bearer {{teacherLogin.response.body.$.token}}
+Accept: application/json
