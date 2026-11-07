@@ -1,0 +1,108 @@
+sequenceDiagram
+    autonumber
+    actor Person as Student or Teacher
+    participant Mobile as React Native mobile application
+    participant Store as Expo SecureStore
+    participant API as Node.js / Express backend
+    participant DB as MongoDB database
+
+    rect rgb(245,248,252)
+    Note over Person,DB: Interactive login
+    Person->>Mobile: Choose role and submit identifier/password
+    Mobile->>Mobile: Trim identifier, validate required fields,<br/>email where applicable, password length at least 8,<br/>supported role and configured API URL
+    alt Client validation fails
+        Mobile-->>Person: Display validation error, no request sent
+    else Client validation passes
+        Mobile->>Mobile: Invalidate older session checks, show login loading
+        Mobile->>API: POST /api/auth/login<br/>{role, identifier, password}
+        alt Network failure or response cannot be parsed
+            Note over Mobile,API: No usable response reaches the client,<br/>server outcome may be unknown
+            Mobile-->>Person: Display connection error, remain on login
+        else JSON response received
+            API->>API: Validate role and required string fields
+            alt Invalid server input
+                API-->>Mobile: 400 {message}
+                Mobile-->>Person: Display backend validation message
+            else Valid server input
+                API->>API: Normalize identifier for selected role
+                API->>DB: User.findOne(role-constrained query)
+                DB-->>API: User document or no match
+                alt No matching account
+                    API-->>Mobile: 401 invalid login details
+                    Mobile-->>Person: Display login error
+                else Account found
+                    API->>API: bcrypt.compare(password, user.passwordHash)
+                    alt Password mismatch
+                        API-->>Mobile: 401 invalid login details
+                        Mobile-->>Person: Display login error
+                    else Password matches
+                        API->>API: jwt.sign(sub = user.id, role = user.role,<br/>server secret, expiresIn = 2h)
+                        API-->>Mobile: 200 {token, user: id/name/role/identifier}
+                        Mobile->>Mobile: Require token and user,<br/>check returned role matches selected role
+                        alt Response fails client checks
+                            Mobile-->>Person: Display sign-in or role error
+                        else Response accepted
+                            Mobile->>Store: setItemAsync(edutrack_token, token)
+                            alt Secure write succeeds
+                                Store-->>Mobile: Promise resolves
+                                Mobile->>Mobile: setUser(user), clear password,<br/>setPage(dashboard)
+                                Mobile-->>Person: Student or Teacher dashboard<br/>only when user.role equals selected role
+                            else Secure write fails
+                                Store-->>Mobile: Promise rejects
+                                Mobile-->>Person: Existing generic connection error,<br/>session is not set to authenticated
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        Mobile->>Mobile: Clear login loading in finally
+    end
+    end
+
+    rect rgb(248,250,245)
+    Note over Person,DB: Separate path on app startup: restoreSession
+    Mobile->>Mobile: Show checking-session indicator,<br/>start version guard and 10-second abort timer
+    Mobile->>Store: getItemAsync(edutrack_token)
+    Store-->>Mobile: Saved token or no token
+    alt No saved token
+        Mobile->>Mobile: Clear user, show Welcome
+    else Saved token exists
+        Mobile->>API: GET /api/auth/me<br/>Authorization: Bearer token
+        API->>API: requireAuth: jwt.verify signature and expiry
+        alt Invalid, expired, missing or malformed Bearer token
+            API-->>Mobile: 401 {message}
+        else JWT verified
+            API->>API: Validate subject is a 24-character hex string
+            alt Invalid subject
+                API-->>Mobile: 401 Invalid session
+            else Valid subject
+                API->>DB: User.findById(sub).select(name role identifier)
+                DB-->>API: Current account or no match
+                alt Missing account or unsupported database role
+                    API-->>Mobile: 401 account unavailable
+                else Existing Student or Teacher
+                    API-->>Mobile: 200 {user: id/name/role/identifier}
+                end
+            end
+        end
+        alt 200 with valid supported user fields
+            Mobile->>Mobile: setUser(user), setRole(user.role),<br/>setPage(dashboard)
+            Mobile-->>Person: Correct Student or Teacher dashboard
+        else 401 received
+            Mobile->>Store: deleteItemAsync(edutrack_token)
+            alt Secure deletion succeeds
+                Store-->>Mobile: Promise resolves
+                Mobile->>Mobile: Clear user, show Welcome
+            else Secure deletion fails
+                Store-->>Mobile: Promise rejects
+                Mobile-->>Person: Session verification error, Retry or Welcome
+            end
+        else Network error, timeout, non-OK response or malformed user
+            Mobile->>Mobile: Do not restore user, preserve saved token
+            Mobile-->>Person: Session verification error,<br/>Retry session check or Continue to Welcome
+        end
+    end
+    Mobile->>Mobile: Clear abort timer in finally
+    Note over Mobile,API: After asynchronous steps, stale restoration results are ignored<br/>when a newer check, login, logout or unmount invalidates their version
+    end
