@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import {
   ActivityIndicator,
@@ -63,7 +63,7 @@ function Button({ title, onPress, disabled = false, light = false }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState("welcome");
+  const [page, setPage] = useState("checkingSession");
   const [role, setRole] = useState("student");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -74,6 +74,75 @@ export default function App() {
   const [teacherData, setTeacherData] = useState(null);
   const [teacherLoading, setTeacherLoading] = useState(false);
   const [teacherError, setTeacherError] = useState("");
+  const [sessionError, setSessionError] = useState("");
+  const sessionCheck = useRef(0);
+
+  useEffect(() => {
+    restoreSession();
+    return () => {
+      sessionCheck.current += 1;
+    };
+  }, []);
+
+  async function restoreSession() {
+    const check = ++sessionCheck.current;
+    const isCurrent = () => check === sessionCheck.current;
+    setSessionError("");
+    setPage("checkingSession");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const token = await SecureStore.getItemAsync("edutrack_token");
+      if (!isCurrent()) return;
+      if (!token) {
+        setUser(null);
+        setPage("welcome");
+        return;
+      }
+      if (!API_URL) throw new Error("Missing API URL");
+
+      const response = await fetch(`${API_URL}/api/auth/me`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      if (!isCurrent()) return;
+
+      if (response.status === 401) {
+        await SecureStore.deleteItemAsync("edutrack_token");
+        if (!isCurrent()) return;
+        setUser(null);
+        setPage("welcome");
+        return;
+      }
+      if (!response.ok) throw new Error("Session verification failed");
+
+      const data = await response.json();
+      if (!isCurrent()) return;
+      if (
+        !data.user ||
+        !["student", "teacher"].includes(data.user.role) ||
+        typeof data.user.id !== "string" || !data.user.id ||
+        typeof data.user.name !== "string" ||
+        typeof data.user.identifier !== "string"
+      ) {
+        throw new Error("Unexpected account response");
+      }
+
+      setUser(data.user);
+      setRole(data.user.role);
+      setPage("dashboard");
+    } catch {
+      if (isCurrent()) {
+        setUser(null);
+        setSessionError("Could not verify your saved session. Check your connection and backend, then retry.");
+        setPage("sessionError");
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   function chooseRole(nextRole) {
     setTeacherData(null);
@@ -87,6 +156,7 @@ export default function App() {
   }
 
   async function signIn() {
+    sessionCheck.current += 1;
     setError("");
     const id = identifier.trim();
 
@@ -218,6 +288,27 @@ export default function App() {
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
         >
+          {page === "checkingSession" && (
+            <View>
+              <ActivityIndicator color={TEAL} />
+              <Text style={styles.muted}>Checking your saved session...</Text>
+            </View>
+          )}
+
+          {page === "sessionError" && (
+            <View>
+              <Text style={styles.errorText}>{sessionError}</Text>
+              <Button title="Retry session check" onPress={restoreSession} />
+              <Button
+                title="Continue to Welcome"
+                onPress={() => {
+                  sessionCheck.current += 1;
+                  setPage("welcome");
+                }}
+              />
+            </View>
+          )}
+
           {page === "welcome" && (
             <View>
               <Text style={styles.tag}>EDUTRACK · LEARN. PRACTISE. GROW.</Text>
@@ -433,6 +524,7 @@ export default function App() {
               <Button
                 title="Log out"
                 onPress={async () => {
+                  sessionCheck.current += 1;
                   try {
                     await SecureStore.deleteItemAsync("edutrack_token");
                     setUser(null);
