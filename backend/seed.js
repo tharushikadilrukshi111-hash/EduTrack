@@ -53,11 +53,13 @@ async function main() {
           passwordHash
         }
       },
+
       {
         upsert: true,
         returnDocument: 'after',
         runValidators: true
       }
+
     );
 
     if (account.role === 'student') {
