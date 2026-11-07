@@ -1,0 +1,320 @@
+{
+  "info": {
+    "name": "EduTrack Authentication",
+    "description": "EDU-22 authentication checks. Configure local test accounts before running. Login scripts save the current JWT for subsequent requests; exported passwords and tokens start empty. The default run validates Teacher session data after both logins.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "studentIdentifier",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "studentPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "teacherIdentifier",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "teacherPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "tokenRole",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "health"
+          ]
+        },
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Backend and MongoDB healthy\", () => { const data = pm.response.json(); pm.expect(data.status).to.eql(\"ok\"); pm.expect(data.database).to.eql(\"connected\"); });"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "Login ? Student",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "login"
+          ]
+        },
+        "auth": {
+          "type": "noauth"
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"role\": \"student\",\n  \"identifier\": \"{{studentIdentifier}}\",\n  \"password\": \"{{studentPassword}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "[\"token\", \"tokenRole\", \"userId\"].forEach(key => pm.collectionVariables.set(key, \"\"));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "const data = pm.response.json();",
+              "pm.test(\"Safe user response\", () => {",
+              "  pm.expect(data.user).to.have.all.keys(\"id\", \"name\", \"role\", \"identifier\");",
+              "  [\"id\", \"name\", \"role\", \"identifier\"].forEach(key => pm.expect(data.user[key]).to.be.a(\"string\").and.not.empty);",
+              "  pm.expect(data.user.role).to.eql(\"student\");",
+              "});",
+              "pm.test(\"Login response and JWT present\", () => {",
+              "  pm.expect(data).to.have.all.keys(\"token\", \"user\");",
+              "  pm.expect(data.token).to.be.a(\"string\").and.match(/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/);",
+              "});",
+              "if (pm.response.code === 200 && data.user && data.user.role === \"student\" && typeof data.token === \"string\" && /^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(data.token)) {",
+              "  pm.collectionVariables.set(\"token\", data.token);",
+              "  pm.collectionVariables.set(\"tokenRole\", data.user.role);",
+              "  pm.collectionVariables.set(\"userId\", data.user.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "Login ? Teacher",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "login"
+          ]
+        },
+        "auth": {
+          "type": "noauth"
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"role\": \"teacher\",\n  \"identifier\": \"{{teacherIdentifier}}\",\n  \"password\": \"{{teacherPassword}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "[\"token\", \"tokenRole\", \"userId\"].forEach(key => pm.collectionVariables.set(key, \"\"));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "const data = pm.response.json();",
+              "pm.test(\"Safe user response\", () => {",
+              "  pm.expect(data.user).to.have.all.keys(\"id\", \"name\", \"role\", \"identifier\");",
+              "  [\"id\", \"name\", \"role\", \"identifier\"].forEach(key => pm.expect(data.user[key]).to.be.a(\"string\").and.not.empty);",
+              "  pm.expect(data.user.role).to.eql(\"teacher\");",
+              "});",
+              "pm.test(\"Login response and JWT present\", () => {",
+              "  pm.expect(data).to.have.all.keys(\"token\", \"user\");",
+              "  pm.expect(data.token).to.be.a(\"string\").and.match(/^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/);",
+              "});",
+              "if (pm.response.code === 200 && data.user && data.user.role === \"teacher\" && typeof data.token === \"string\" && /^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$/.test(data.token)) {",
+              "  pm.collectionVariables.set(\"token\", data.token);",
+              "  pm.collectionVariables.set(\"tokenRole\", data.user.role);",
+              "  pm.collectionVariables.set(\"userId\", data.user.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "Current user ? Validate authenticated user",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/auth/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "auth",
+            "me"
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "const data = pm.response.json();",
+              "pm.test(\"Safe user response\", () => {",
+              "  pm.expect(data.user).to.have.all.keys(\"id\", \"name\", \"role\", \"identifier\");",
+              "  [\"id\", \"name\", \"role\", \"identifier\"].forEach(key => pm.expect(data.user[key]).to.be.a(\"string\").and.not.empty);",
+              "  pm.expect(data.user.role).to.eql(pm.collectionVariables.get(\"tokenRole\"));",
+              "});",
+              "pm.test(\"Current account matches login\", () => { pm.expect(data).to.have.all.keys(\"user\"); pm.expect(data.user.id).to.eql(pm.collectionVariables.get(\"userId\")); });"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "Teacher dashboard ? Protected Teacher API",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/teacher/dashboard",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "teacher",
+            "dashboard"
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{token}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "const data = pm.response.json();",
+              "pm.test(\"Safe user response\", () => {",
+              "  pm.expect(data.user).to.have.all.keys(\"id\", \"name\", \"role\", \"identifier\");",
+              "  [\"id\", \"name\", \"role\", \"identifier\"].forEach(key => pm.expect(data.user[key]).to.be.a(\"string\").and.not.empty);",
+              "  pm.expect(data.user.role).to.eql(\"teacher\");",
+              "});",
+              "pm.test(\"Teacher account matches login\", () => { pm.expect(data).to.have.all.keys(\"user\"); pm.expect(data.user.id).to.eql(pm.collectionVariables.get(\"userId\")); });"
+            ]
+          }
+        }
+      ],
+      "response": []
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+classDiagram
+direction TB
+class User {
+  ObjectId _id
+  String name
+  String role
+  String identifier
+  String email
+  String passwordHash
+}
+class Student {
+  ObjectId _id
+  ObjectId userId
+  String registrationNumber
+  Date dateOfBirth
+  String phone
+  ObjectId parentId
+}
+class Class {
+  ObjectId _id
+  String name
+  String subject
+  String description
+  ObjectId teacherId
+  ObjectId[] studentIds
+  Number fee
+  Boolean isActive
+}
+class ScheduleEntry {
+  <<embedded>>
+  String day
+  String startTime
+  String endTime
+}
+class Material {
+  ObjectId _id
+  String title
+  String description
+  String fileUrl
+  String fileType
+  ObjectId classId
+  ObjectId uploadedBy
+}
+class Quiz {
+  ObjectId _id
+  String title
+  String description
+  ObjectId classId
+  Number totalMarks
+  ObjectId createdBy
+  Date dueDate
+  Boolean isPublished
+  Number maxAttempts
+}
+class Question {
+  <<embedded>>
+  ObjectId _id
+  String questionText
+  String[] options
+  String correctAnswer
+  Number marks
+}
+class Result {
+  ObjectId _id
+  ObjectId studentId
+  ObjectId quizId
+  Number score
+  Number totalMarks
+  Date submittedAt
+}
+class Answer {
+  <<embedded>>
+  ObjectId questionId
+  String selectedAnswer
+  Boolean isCorrect
+  Number marksAwarded
+}
+class Payment {
+  ObjectId _id
+  ObjectId studentId
+  ObjectId classId
+  Number amount
+  Date paymentDate
+  String paymentMethod
+  String status
+  String transactionReference
+}
+class Notification {
+  ObjectId _id
+  ObjectId userId
+  String title
+  String message
+  String type
+  Boolean isRead
+}
+Student "0..1" --> "1" User : userId
+Student "0..*" --> "0..1" User : parentId
+Class "0..*" --> "1" User : teacherId
+Class "0..*" --> "0..*" Student : studentIds
+Class "1" *-- "0..*" ScheduleEntry : schedule
+Material "0..*" --> "1" Class : classId
+Material "0..*" --> "1" User : uploadedBy
+Quiz "0..*" --> "1" Class : classId
+Quiz "0..*" --> "1" User : createdBy
+Quiz "1" *-- "1..*" Question : questions
+Result "0..*" --> "1" Student : studentId
+Result "0..*" --> "1" Quiz : quizId
+Result "1" *-- "0..*" Answer : answers
+Payment "0..*" --> "1" Student : studentId
+Payment "0..*" --> "1" Class : classId
+Notification "0..*" --> "1" User : userId

@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import * as SecureStore from "expo-secure-store";
 import {
   ActivityIndicator,
   Alert,
@@ -62,7 +63,7 @@ function Button({ title, onPress, disabled = false, light = false }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState("welcome");
+  const [page, setPage] = useState("checkingSession");
   const [role, setRole] = useState("student");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -70,8 +71,83 @@ export default function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
+  const [teacherData, setTeacherData] = useState(null);
+  const [teacherLoading, setTeacherLoading] = useState(false);
+  const [teacherError, setTeacherError] = useState("");
+  const [sessionError, setSessionError] = useState("");
+  const sessionCheck = useRef(0);
+
+  useEffect(() => {
+    restoreSession();
+    return () => {
+      sessionCheck.current += 1;
+    };
+  }, []);
+
+  async function restoreSession() {
+    const check = ++sessionCheck.current;
+    const isCurrent = () => check === sessionCheck.current;
+    setSessionError("");
+    setPage("checkingSession");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const token = await SecureStore.getItemAsync("edutrack_token");
+      if (!isCurrent()) return;
+      if (!token) {
+        setUser(null);
+        setPage("welcome");
+        return;
+      }
+      if (!API_URL) throw new Error("Missing API URL");
+
+      const response = await fetch(`${API_URL}/api/auth/me`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+      if (!isCurrent()) return;
+
+      if (response.status === 401) {
+        await SecureStore.deleteItemAsync("edutrack_token");
+        if (!isCurrent()) return;
+        setUser(null);
+        setPage("welcome");
+        return;
+      }
+      if (!response.ok) throw new Error("Session verification failed");
+
+      const data = await response.json();
+      if (!isCurrent()) return;
+      if (
+        !data.user ||
+        !["student", "teacher"].includes(data.user.role) ||
+        typeof data.user.id !== "string" || !data.user.id ||
+        typeof data.user.name !== "string" ||
+        typeof data.user.identifier !== "string"
+      ) {
+        throw new Error("Unexpected account response");
+      }
+
+      setUser(data.user);
+      setRole(data.user.role);
+      setPage("dashboard");
+    } catch {
+      if (isCurrent()) {
+        setUser(null);
+        setSessionError("Could not verify your saved session. Check your connection and backend, then retry.");
+        setPage("sessionError");
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   function chooseRole(nextRole) {
+    setTeacherData(null);
+    setTeacherError("");
+    setTeacherLoading(false);
     setRole(nextRole);
     setIdentifier("");
     setPassword("");
@@ -81,6 +157,7 @@ export default function App() {
   }
 
   async function signIn() {
+    sessionCheck.current += 1;
     setError("");
     const id = identifier.trim();
 
@@ -125,15 +202,98 @@ export default function App() {
       const data = await response.json();
 
       if (!response.ok || !data.token || !data.user) {
-        setError(data.message || "Sign in failed. Check your details.");
+        setError(data.message || "Sign in failed.");
+      } else if (data.user.role !== role) {
+        setError("This account cannot access the selected role.");
       } else {
+        await SecureStore.setItemAsync("edutrack_token", data.token);
         setUser(data.user);
+        setPassword("");
         setPage("dashboard");
       }
     } catch {
       setError("Cannot reach the backend. Check Wi-Fi, IP address and server.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadTeacherData() {
+    if (role !== "teacher" || user?.role !== "teacher" || teacherLoading) {
+      return;
+    }
+
+    const check = sessionCheck.current;
+    const isCurrent = () => check === sessionCheck.current;
+    setTeacherData(null);
+    setTeacherError("");
+    setTeacherLoading(true);
+
+    try {
+      if (!API_URL) {
+        setTeacherError("Set EXPO_PUBLIC_API_URL in mobile/.env first.");
+        return;
+      }
+
+      let token;
+      try {
+        token = await SecureStore.getItemAsync("edutrack_token");
+      } catch {
+        if (isCurrent()) {
+          setTeacherError("Could not read your saved session. Please try again.");
+        }
+        return;
+      }
+      if (!isCurrent()) return;
+
+      if (!token) {
+        setTeacherError("No saved session found. Please log out and sign in again.");
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/api/teacher/dashboard`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!isCurrent()) return;
+
+      if (response.status === 401) {
+        try {
+          await SecureStore.deleteItemAsync("edutrack_token");
+        } catch {
+          if (isCurrent()) {
+            setTeacherError("Your session expired, but the saved token could not be removed securely. Please retry or log out.");
+          }
+          return;
+        }
+        if (!isCurrent()) return;
+        setUser(null);
+        setPassword("");
+        setTeacherData(null);
+        setPage("welcome");
+        Alert.alert("Session expired", "Your session is no longer authorized. Please sign in again.");
+        return;
+      }
+      if (response.status === 403) {
+        setTeacherError("Access denied. A Teacher account is required.");
+        return;
+      }
+
+      const data = await response.json();
+      if (!isCurrent()) return;
+      if (!response.ok) {
+        setTeacherError(data.message || "Could not load Teacher data.");
+      } else if (!data.user || data.user.role !== "teacher" || data.user.id !== user.id) {
+        setTeacherError("The backend returned unexpected Teacher data.");
+      } else {
+        setTeacherData(data.user);
+      }
+    } catch {
+      if (isCurrent()) {
+        setTeacherError("Could not load Teacher data. Check your connection and backend, then try again.");
+      }
+    } finally {
+      if (isCurrent()) setTeacherLoading(false);
     }
   }
 
@@ -151,6 +311,27 @@ export default function App() {
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
         >
+          {page === "checkingSession" && (
+            <View>
+              <ActivityIndicator color={TEAL} />
+              <Text style={styles.muted}>Checking your saved session...</Text>
+            </View>
+          )}
+
+          {page === "sessionError" && (
+            <View>
+              <Text style={styles.errorText}>{sessionError}</Text>
+              <Button title="Retry session check" onPress={restoreSession} />
+              <Button
+                title="Continue to Welcome"
+                onPress={() => {
+                  sessionCheck.current += 1;
+                  setPage("welcome");
+                }}
+              />
+            </View>
+          )}
+
           {page === "welcome" && (
             <View>
               <Text style={styles.tag}>EDUTRACK · LEARN. PRACTISE. GROW.</Text>
@@ -321,7 +502,7 @@ export default function App() {
             </View>
           )}
 
-          {page === "dashboard" && (
+          {page === "dashboard" && user && user.role === role && (
             <View>
               <Text style={styles.tag}>EDUTRACK</Text>
 
@@ -342,12 +523,43 @@ export default function App() {
                 </Text>
               </View>
 
+              {role === "teacher" && user.role === "teacher" && (
+                <View style={styles.roleCard}>
+                  <Button
+                    title="Load Teacher Data"
+                    onPress={loadTeacherData}
+                    disabled={teacherLoading}
+                  />
+                  {teacherLoading && <ActivityIndicator color={TEAL} />}
+                  {!!teacherError && (
+                    <Text style={styles.errorText}>{teacherError}</Text>
+                  )}
+                  {teacherData && teacherData.id === user.id && (
+                    <View>
+                      <Text style={styles.cardTitle}>{teacherData.name}</Text>
+                      <Text style={styles.muted}>Role: {teacherData.role}</Text>
+                      <Text style={styles.muted}>Identifier: {teacherData.identifier}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
               <Button
                 title="Log out"
-                onPress={() => {
-                  setUser(null);
-                  setPassword("");
-                  setPage("welcome");
+                onPress={async () => {
+                  sessionCheck.current += 1;
+                  setTeacherLoading(false);
+                  try {
+                    await SecureStore.deleteItemAsync("edutrack_token");
+                    setUser(null);
+                    setPassword("");
+                    setPage("welcome");
+                  } catch {
+                    Alert.alert(
+                      "Logout failed",
+                      "Could not securely remove your saved session. Please try again.",
+                    );
+                  }
                 }}
               />
             </View>
