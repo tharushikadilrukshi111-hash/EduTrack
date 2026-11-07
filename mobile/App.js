@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import * as SecureStore from "expo-secure-store";
 import {
   ActivityIndicator,
   Alert,
@@ -129,7 +130,9 @@ export default function App() {
       } else if (data.user.role !== role) {
         setError("This account cannot access the selected role.");
       } else {
+        await SecureStore.setItemAsync("edutrack_token", data.token);
         setUser(data.user);
+        setPassword("");
         setPage("dashboard");
       }
     } catch {
@@ -346,10 +349,18 @@ export default function App() {
 
               <Button
                 title="Log out"
-                onPress={() => {
-                  setUser(null);
-                  setPassword("");
-                  setPage("welcome");
+                onPress={async () => {
+                  try {
+                    await SecureStore.deleteItemAsync("edutrack_token");
+                    setUser(null);
+                    setPassword("");
+                    setPage("welcome");
+                  } catch {
+                    Alert.alert(
+                      "Logout failed",
+                      "Could not securely remove your saved session. Please try again.",
+                    );
+                  }
                 }}
               />
             </View>
