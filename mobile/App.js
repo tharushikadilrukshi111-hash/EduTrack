@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import StudentDashboard from "./components/StudentDashboard";
+import MyClassesScreen from "./components/MyClassesScreen";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -77,6 +79,15 @@ export default function App() {
   const [teacherError, setTeacherError] = useState("");
   const [sessionError, setSessionError] = useState("");
   const sessionCheck = useRef(0);
+
+  useEffect(() => {
+    if (page !== "myClasses" || role !== "student" || user?.role !== "student") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      setPage("dashboard");
+      return true;
+    });
+    return () => subscription.remove();
+  }, [page, role, user?.role]);
 
   useEffect(() => {
     restoreSession();
@@ -520,7 +531,15 @@ export default function App() {
           )}
 
           {page === "dashboard" && user && user.role === role && role === "student" && (
-            <StudentDashboard student={user} onLogout={logOut} />
+            <StudentDashboard
+              student={user}
+              onLogout={logOut}
+              onMyClasses={() => setPage("myClasses")}
+            />
+          )}
+
+          {page === "myClasses" && user && user.role === role && role === "student" && (
+            <MyClassesScreen onBack={() => setPage("dashboard")} />
           )}
 
           {page === "dashboard" && user && user.role === role && role === "teacher" && (

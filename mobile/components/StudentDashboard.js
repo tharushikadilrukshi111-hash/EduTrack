@@ -1,7 +1,7 @@
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
-export default function StudentDashboard({ student, onLogout }) {
+export default function StudentDashboard({ student, onLogout, onMyClasses }) {
   return (
     <View>
       <Text style={styles.tag}>EDUTRACK</Text>
@@ -15,6 +15,9 @@ export default function StudentDashboard({ student, onLogout }) {
           Your full dashboard will be built next.
         </Text>
       </View>
+      <TouchableOpacity onPress={onMyClasses} style={styles.button} accessibilityRole="button">
+        <Text style={styles.buttonText}>My Classes</Text>
+      </TouchableOpacity>
       <TouchableOpacity onPress={onLogout} style={styles.button}>
         <Text style={styles.buttonText}>Log out</Text>
       </TouchableOpacity>
