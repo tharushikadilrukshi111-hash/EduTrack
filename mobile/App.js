@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import StudentDashboard from "./components/StudentDashboard";
 import MyClassesScreen from "./components/MyClassesScreen";
+import StudentQRCardScreen from "./components/StudentQRCardScreen";
 import {
   ActivityIndicator,
   Alert,
@@ -81,7 +82,7 @@ export default function App() {
   const sessionCheck = useRef(0);
 
   useEffect(() => {
-    if (page !== "myClasses" || role !== "student" || user?.role !== "student") return;
+    if (!["myClasses", "studentQRCard"].includes(page) || role !== "student" || user?.role !== "student") return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       setPage("dashboard");
       return true;
@@ -535,11 +536,16 @@ export default function App() {
               student={user}
               onLogout={logOut}
               onMyClasses={() => setPage("myClasses")}
+              onMyQRCard={() => setPage("studentQRCard")}
             />
           )}
 
           {page === "myClasses" && user && user.role === role && role === "student" && (
             <MyClassesScreen onBack={() => setPage("dashboard")} />
+          )}
+
+          {page === "studentQRCard" && user && user.role === role && role === "student" && (
+            <StudentQRCardScreen student={user} onBack={() => setPage("dashboard")} />
           )}
 
           {page === "dashboard" && user && user.role === role && role === "teacher" && (
