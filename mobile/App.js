@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
+import StudentDashboard from "./components/StudentDashboard";
 import {
   ActivityIndicator,
   Alert,
@@ -297,6 +298,22 @@ export default function App() {
     }
   }
 
+  async function logOut() {
+    sessionCheck.current += 1;
+    setTeacherLoading(false);
+    try {
+      await SecureStore.deleteItemAsync("edutrack_token");
+      setUser(null);
+      setPassword("");
+      setPage("welcome");
+    } catch {
+      Alert.alert(
+        "Logout failed",
+        "Could not securely remove your saved session. Please try again.",
+      );
+    }
+  }
+
   const info = ROLES[role];
 
   return (
@@ -502,7 +519,11 @@ export default function App() {
             </View>
           )}
 
-          {page === "dashboard" && user && user.role === role && (
+          {page === "dashboard" && user && user.role === role && role === "student" && (
+            <StudentDashboard student={user} onLogout={logOut} />
+          )}
+
+          {page === "dashboard" && user && user.role === role && role === "teacher" && (
             <View>
               <Text style={styles.tag}>EDUTRACK</Text>
 
@@ -546,21 +567,7 @@ export default function App() {
 
               <Button
                 title="Log out"
-                onPress={async () => {
-                  sessionCheck.current += 1;
-                  setTeacherLoading(false);
-                  try {
-                    await SecureStore.deleteItemAsync("edutrack_token");
-                    setUser(null);
-                    setPassword("");
-                    setPage("welcome");
-                  } catch {
-                    Alert.alert(
-                      "Logout failed",
-                      "Could not securely remove your saved session. Please try again.",
-                    );
-                  }
-                }}
+                onPress={logOut}
               />
             </View>
           )}
