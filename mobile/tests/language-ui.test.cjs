@@ -17,7 +17,14 @@ function environment() {
   let save = async () => savingResult;
   let response = { ok: false, json: async () => ({ message: "Backend message" }) };
   const React = {
-    createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+    createElement: (type, props, ...children) => {
+      const merged = { ...props, ...(children.length ? { children } : {}) };
+      if (["LocalizedText", "LocalizedTextInput", "SinhalaText", "SinhalaTextInput"].includes(type.name)) return type(merged);
+      return { type, props: merged };
+    },
+    createContext: (value) => ({ value, Provider: "Provider" }),
+    useContext: (context) => context.value,
+    forwardRef: (fn) => fn,
     useState(initial) {
       const i = cursor++;
       if (!(i in slots)) slots[i] = initial;
@@ -33,7 +40,8 @@ function environment() {
       if (!(i in slots)) { slots[i] = true; pending.push(fn); }
     },
   };
-  const native = new Proxy({ StyleSheet: { create: (s) => s }, Platform: { OS: "android" }, Alert: { alert: (...args) => alerts.push(args) } }, {
+  const flatten = (s) => Array.isArray(s) ? Object.assign({}, ...s.map(flatten)) : s || {};
+  const native = new Proxy({ StyleSheet: { create: (s) => s, flatten }, Platform: { OS: "android" }, Alert: { alert: (...args) => alerts.push(args) } }, {
     get: (object, key) => key in object ? object[key] : key,
   });
   const cache = {};
@@ -60,6 +68,8 @@ function environment() {
       require(name) {
         if (name === "react") return React;
         if (name === "react-native") return native;
+        if (name === "expo-font") return { useFonts: () => [false, null] };
+        if (name.endsWith(".ttf")) return name;
         if (name.endsWith("/context/LanguageContext")) return language;
         if (name === "expo-secure-store") return {
           getItemAsync: async () => { if (readError) throw Error("test"); return token; },
@@ -109,7 +119,7 @@ function button(tree, title) {
 async function loginScreen(env, role = "student") {
   const wrapper = env.load("App.js").default();
   assert.equal(wrapper.type, "LanguageProvider");
-  const AppContent = wrapper.props.children[0].type;
+  const AppContent = wrapper.props.children[0].props.children[0].type;
   env.render(AppContent); await tick();
   let tree = env.render(AppContent);
   button(tree, "Get started").props.onPress();
@@ -147,7 +157,7 @@ test("switcher accessible selection, immediate update, rapid-tap guard, failure 
 });
 
 test("Welcome and role selection update in place in English and Sinhala", async () => {
-  const env = environment(), wrapper = env.load("App.js").default(), AppContent = wrapper.props.children[0].type;
+  const env = environment(), wrapper = env.load("App.js").default(), AppContent = wrapper.props.children[0].props.children[0].type;
   env.render(AppContent); await tick();
   let tree = env.render(AppContent); assert.match(text(tree), /Learn with confidence/);
   env.setLocale("si"); tree = env.render(AppContent);
@@ -249,7 +259,9 @@ test("loaded Teacher values survive language changes; only labels translate", as
   for (const locale of ["en", "si", "en"]) {
     env.setLocale(locale); const tree = env.render(AppContent), tr = env.load("localization/i18n.js").createI18n(locale);
     assert.ok(text(tree).includes(payload.name));
-    const labels = all(tree).filter((n) => n.type === "Text").map((n) => n.props.children.join(""));
+    const joinText = (node) => typeof node === "string" ? node
+      : Array.isArray(node) ? node.map(joinText).join("") : joinText(node?.props?.children || []);
+    const labels = all(tree).filter((n) => n.type === "Text").map(joinText);
     assert.ok(labels.includes(`${tr.t("dashboard.roleLabel")}: teacher`));
     assert.ok(labels.includes(`${tr.t("dashboard.identifierLabel")}: ${payload.identifier}`));
     assert.equal(env.requests.length, count);
@@ -295,7 +307,7 @@ test("Teacher local errors are reactive; arbitrary backend errors remain verbati
 test("session checking/error/retry screens translate without modifying token handling", async () => {
   const env = environment(); env.setToken("saved-token");
   env.setResponse(() => { throw Error("network"); });
-  const AppContent = env.load("App.js").default().props.children[0].type;
+  const AppContent = env.load("App.js").default().props.children[0].props.children[0].type;
   env.setLocale("si"); const tr = env.load("localization/i18n.js").createI18n("si");
   assert.ok(text(env.render(AppContent)).includes(tr.t("auth.checkingSession")));
   await tick(); let tree = env.render(AppContent);
@@ -313,7 +325,7 @@ test("restoration validates supported roles; Teacher expiry clears only authenti
     const env = environment(); env.setToken("saved-token");
     const user = { id: "user-id", role, name: "Original", identifier: "ID" };
     env.setResponse({ ok: true, status: 200, json: async () => ({ user }) });
-    const AppContent = env.load("App.js").default().props.children[0].type;
+    const AppContent = env.load("App.js").default().props.children[0].props.children[0].type;
     env.render(AppContent); await tick(); const tree = env.render(AppContent);
     assert.equal(all(tree).some((n) => n.props.title === "Log out"), ["student", "teacher"].includes(role));
     if (["parent", "admin"].includes(role)) assert.match(text(tree), /Could not verify/);

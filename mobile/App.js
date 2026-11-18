@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import { LanguageProvider, useLanguage } from "./context/LanguageContext";
 import LanguageSwitcher from "./components/LanguageSwitcher";
+import { SinhalaFontProvider } from "./components/SinhalaTypography";
+import { LocalizedText, LocalizedTextInput } from "./components/LocalizedTypography";
 import {
   ActivityIndicator,
   Alert,
@@ -12,7 +14,6 @@ import {
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -59,13 +60,13 @@ function Button({ title, onPress, disabled = false, light = false }) {
         disabled && { opacity: 0.6 },
       ]}
     >
-      <Text style={[styles.buttonText, light && { color: BLUE }]}>{title}</Text>
+      <LocalizedText style={[styles.buttonText, light && { color: BLUE }]}>{title}</LocalizedText>
     </TouchableOpacity>
   );
 }
 
 export default function App() {
-  return <LanguageProvider><AppContent /></LanguageProvider>;
+  return <LanguageProvider><SinhalaFontProvider><AppContent /></SinhalaFontProvider></LanguageProvider>;
 }
 
 function AppContent() {
@@ -323,14 +324,14 @@ function AppContent() {
           {page === "checkingSession" && (
             <View>
               <ActivityIndicator color={TEAL} />
-              <Text style={styles.muted}>{t("auth.checkingSession")}</Text>
+              <LocalizedText style={styles.muted}>{t("auth.checkingSession")}</LocalizedText>
             </View>
           )}
 
           {page === "sessionError" && (
             <View>
               <LanguageSwitcher />
-              <Text style={styles.errorText}>{sessionError ? t(sessionError) : ""}</Text>
+              <LocalizedText style={styles.errorText}>{sessionError ? t(sessionError) : ""}</LocalizedText>
               <Button title={t("auth.retrySession")} onPress={restoreSession} />
               <Button
                 title={t("auth.continueToWelcome")}
@@ -345,50 +346,50 @@ function AppContent() {
           {page === "welcome" && (
             <View>
               <LanguageSwitcher />
-              <Text style={styles.tag}>{t("welcome.tagline")}</Text>
+              <LocalizedText style={styles.tag}>{t("welcome.tagline")}</LocalizedText>
 
-              <Text style={styles.title}>{t("welcome.heading")}</Text>
+              <LocalizedText style={styles.title}>{t("welcome.heading")}</LocalizedText>
 
               <View style={styles.art}>
                 <Text style={{ fontSize: 92 }}>📖</Text>
                 <Text style={styles.artCheck}>✓</Text>
               </View>
 
-              <Text style={styles.bigTitle}>
+              <LocalizedText style={styles.bigTitle}>
                 {t("welcome.description")}
-              </Text>
+              </LocalizedText>
 
-              <Text style={styles.muted}>
+              <LocalizedText style={styles.muted}>
                 {t("welcome.supportingText")}
-              </Text>
+              </LocalizedText>
 
               <Button title={t("welcome.getStarted")} onPress={() => setPage("roles")} />
 
-              <Text style={styles.small}>
+              <LocalizedText style={styles.small}>
                 {t("welcome.audience")}
-              </Text>
+              </LocalizedText>
             </View>
           )}
 
           {page === "roles" && (
             <View>
-              <Text style={styles.back} onPress={() => setPage("welcome")}>
+              <LocalizedText style={styles.back} onPress={() => setPage("welcome")}>
                 ‹ {t("welcome.back")}
-              </Text>
+              </LocalizedText>
 
-              <Text style={styles.title}>{t("roles.heading")}</Text>
-              <Text style={styles.muted}>{t("roles.description")}</Text>
+              <LocalizedText style={styles.title}>{t("roles.heading")}</LocalizedText>
+              <LocalizedText style={styles.muted}>{t("roles.description")}</LocalizedText>
 
               <View style={styles.studentCard}>
-                <Text style={styles.whiteSmall}>{t("roles.forLearners")}</Text>
+                <LocalizedText style={styles.whiteSmall}>{t("roles.forLearners")}</LocalizedText>
 
-                <Text style={styles.studentTitle}>
+                <LocalizedText style={styles.studentTitle}>
                   {t("roles.progress")}
-                </Text>
+                </LocalizedText>
 
-                <Text style={styles.whiteSmall}>
+                <LocalizedText style={styles.whiteSmall}>
                   {t("roles.studentDescription")}
-                </Text>
+                </LocalizedText>
 
                 <Button
                   title={t("roles.chooseStudent")}
@@ -401,34 +402,34 @@ function AppContent() {
                 style={styles.roleCard}
                 onPress={() => chooseRole("teacher")}
               >
-                <Text style={styles.cardTitle}>{t("roles.teacher")}</Text>
-                <Text style={styles.muted}>
+                <LocalizedText style={styles.cardTitle}>{t("roles.teacher")}</LocalizedText>
+                <LocalizedText style={styles.muted}>
                   {t("roles.teacherDescription")}
-                </Text>
-                <Text style={styles.link}>{t("roles.continueTeacher")}</Text>
+                </LocalizedText>
+                <LocalizedText style={styles.link}>{t("roles.continueTeacher")}</LocalizedText>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.roleCard}
                 onPress={() => chooseRole("parent")}
               >
-                <Text style={styles.cardTitle}>{t("roles.parent")}</Text>
-                <Text style={styles.muted}>
+                <LocalizedText style={styles.cardTitle}>{t("roles.parent")}</LocalizedText>
+                <LocalizedText style={styles.muted}>
                   {t("roles.parentDescription")}
-                </Text>
-                <Text style={styles.link}>{t("roles.continueParent")}</Text>
+                </LocalizedText>
+                <LocalizedText style={styles.link}>{t("roles.continueParent")}</LocalizedText>
               </TouchableOpacity>
 
-              <Text style={styles.link} onPress={() => chooseRole("admin")}>
+              <LocalizedText style={styles.link} onPress={() => chooseRole("admin")}>
                 {t("roles.adminAccess")}
-              </Text>
+              </LocalizedText>
             </View>
           )}
 
           {page === "login" && (
             <View>
               <LanguageSwitcher />
-              <Text
+              <LocalizedText
                 style={styles.back}
                 onPress={() => {
                   setError("");
@@ -436,24 +437,24 @@ function AppContent() {
                 }}
               >
                 ‹ {t("login.secureAccess")}
-              </Text>
+              </LocalizedText>
 
-              <Text style={styles.title}>{t(info.title)}</Text>
-              <Text style={styles.link}>{t(`roles.${role}`)}</Text>
+              <LocalizedText style={styles.title}>{t(info.title)}</LocalizedText>
+              <LocalizedText style={styles.link}>{t(`roles.${role}`)}</LocalizedText>
 
-              <Text style={styles.muted}>
+              <LocalizedText style={styles.muted}>
                 {t("login.welcomeBack")}
-              </Text>
+              </LocalizedText>
 
               {!!error && (
                 <View style={styles.errorBox}>
-                  <Text style={styles.errorTitle}>{t("login.unsuccessful")}</Text>
-                  <Text style={styles.errorText}>{error.key ? t(error.key) : error.message}</Text>
+                  <LocalizedText style={styles.errorTitle}>{t("login.unsuccessful")}</LocalizedText>
+                  {error.key ? <LocalizedText style={styles.errorText}>{t(error.key)}</LocalizedText> : <Text style={styles.errorText}>{error.message}</Text>}
                 </View>
               )}
 
-              <Text style={styles.fieldLabel}>{t(info.label)}</Text>
-              <TextInput
+              <LocalizedText style={styles.fieldLabel}>{t(info.label)}</LocalizedText>
+              <LocalizedTextInput
                 style={styles.input}
                 placeholder={info.hint}
                 value={identifier}
@@ -463,8 +464,8 @@ function AppContent() {
                 onChangeText={setIdentifier}
               />
 
-              <Text style={styles.fieldLabel}>{t("login.password")}</Text>
-              <TextInput
+              <LocalizedText style={styles.fieldLabel}>{t("login.password")}</LocalizedText>
+              <LocalizedTextInput
                 style={styles.input}
                 placeholder={t("login.passwordPlaceholder")}
                 value={password}
@@ -473,13 +474,13 @@ function AppContent() {
                 autoCapitalize="none"
               />
 
-              <Text style={styles.small}>{t("login.passwordHint")}</Text>
+              <LocalizedText style={styles.small}>{t("login.passwordHint")}</LocalizedText>
 
-              <Text style={styles.link} onPress={() => setVisible(!visible)}>
+              <LocalizedText style={styles.link} onPress={() => setVisible(!visible)}>
                 {t(visible ? "login.hidePassword" : "login.showPassword")}
-              </Text>
+              </LocalizedText>
 
-              <Text
+              <LocalizedText
                 style={styles.link}
                 onPress={() =>
                   Alert.alert(
@@ -489,20 +490,20 @@ function AppContent() {
                 }
               >
                 {t("login.forgotPassword")}
-              </Text>
+              </LocalizedText>
 
               <View style={{ marginTop: 14 }}>
                 {loading ? (
                   <View accessibilityLiveRegion="polite">
                     <ActivityIndicator color={TEAL} accessibilityLabel={t("common.loading")} />
-                    <Text style={styles.muted}>{t("common.loading")}</Text>
+                    <LocalizedText style={styles.muted}>{t("common.loading")}</LocalizedText>
                   </View>
                 ) : (
                   <Button title={t("login.signIn")} onPress={signIn} />
                 )}
               </View>
 
-              <Text
+              <LocalizedText
                 style={styles.link}
                 onPress={() =>
                   Alert.alert(
@@ -512,7 +513,7 @@ function AppContent() {
                 }
               >
                 {t(info.help)}
-              </Text>
+              </LocalizedText>
             </View>
           )}
 
@@ -521,19 +522,19 @@ function AppContent() {
               <LanguageSwitcher />
               <Text style={styles.tag}>EDUTRACK</Text>
 
-              <Text style={styles.bigTitle}>
+              <LocalizedText style={styles.bigTitle}>
                 {t(user?.role === "teacher" ? "dashboard.teacher" : "dashboard.student")}
-              </Text>
+              </LocalizedText>
 
-              <Text style={styles.muted}>
+              <LocalizedText style={styles.muted}>
                 {t("dashboard.welcome", { name: user?.name || t("dashboard.defaultUser") })}
-              </Text>
+              </LocalizedText>
 
               <View style={styles.roleCard}>
-                <Text style={styles.cardTitle}>✓ {t("dashboard.loginSuccessful")}</Text>
-                <Text style={styles.muted}>
+                <LocalizedText style={styles.cardTitle}>✓ {t("dashboard.loginSuccessful")}</LocalizedText>
+                <LocalizedText style={styles.muted}>
                   {t("dashboard.comingSoon")}
-                </Text>
+                </LocalizedText>
               </View>
 
               {role === "teacher" && user.role === "teacher" && (
@@ -546,17 +547,17 @@ function AppContent() {
                   {teacherLoading && (
                     <View accessibilityLiveRegion="polite">
                       <ActivityIndicator color={TEAL} accessibilityLabel={t("common.loading")} />
-                      <Text style={styles.muted}>{t("common.loading")}</Text>
+                      <LocalizedText style={styles.muted}>{t("common.loading")}</LocalizedText>
                     </View>
                   )}
                   {!!teacherError && (
-                    <Text style={styles.errorText}>{teacherError.key ? t(teacherError.key) : teacherError.message}</Text>
+                    teacherError.key ? <LocalizedText style={styles.errorText}>{t(teacherError.key)}</LocalizedText> : <Text style={styles.errorText}>{teacherError.message}</Text>
                   )}
                   {teacherData && teacherData.id === user.id && (
                     <View>
                       <Text style={styles.cardTitle}>{teacherData.name}</Text>
-                      <Text style={styles.muted}>{t("dashboard.roleLabel")}: {teacherData.role}</Text>
-                      <Text style={styles.muted}>{t("dashboard.identifierLabel")}: {teacherData.identifier}</Text>
+                      <Text style={styles.muted}><LocalizedText>{t("dashboard.roleLabel")}: </LocalizedText>{teacherData.role}</Text>
+                      <Text style={styles.muted}><LocalizedText>{t("dashboard.identifierLabel")}: </LocalizedText>{teacherData.identifier}</Text>
                     </View>
                   )}
                 </View>

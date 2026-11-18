@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
+import { LocalizedText } from "./LocalizedTypography";
 import { useLanguage } from "../context/LanguageContext";
 
 export default function LanguageSwitcher() {
@@ -32,7 +33,7 @@ export default function LanguageSwitcher() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>{t("language.label")}</Text>
+      <LocalizedText style={styles.label}>{t("language.label")}</LocalizedText>
       <View style={styles.options}>
         {["en", "si"].map((code) => (
           <Pressable
@@ -44,13 +45,13 @@ export default function LanguageSwitcher() {
             onPress={() => selectLanguage(code)}
             style={[styles.option, language === code && styles.selected, saving && styles.saving]}
           >
-            <Text style={[styles.text, language === code && styles.selectedText]}>
+            <LocalizedText style={[styles.text, language === code && styles.selectedText]}>
               {t(code === "en" ? "language.english" : "language.sinhala")}
-            </Text>
+            </LocalizedText>
           </Pressable>
         ))}
       </View>
-      {saveFailed && <Text style={styles.error} accessibilityLiveRegion="polite">{t("language.saveFailure")}</Text>}
+      {saveFailed && <LocalizedText style={styles.error} accessibilityLiveRegion="polite">{t("language.saveFailure")}</LocalizedText>}
     </View>
   );
 }
