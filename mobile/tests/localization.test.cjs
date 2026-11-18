@@ -98,7 +98,8 @@ test("matching dictionaries: every English/Sinhala leaf and interpolation", () =
     const translator = createI18n(locale);
     for (const [key, text] of leaves(dictionary)) {
       assert.ok(text.trim());
-      assert.equal(translator.t(key, { name: "Sadeepa" }), text.replace("%{name}", "Sadeepa"));
+      const params = { name: "Sadeepa", date: "2026-11-18", grade: 10 };
+      assert.equal(translator.t(key, params), text.replace(/%\{(\w+)\}/g, (_, name) => params[name]));
       if (locale === "si" && key !== "language.english") assert.match(text, /[\u0D80-\u0DFF]/);
     }
   }

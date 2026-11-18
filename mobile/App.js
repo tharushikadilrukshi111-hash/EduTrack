@@ -4,9 +4,14 @@ import { LanguageProvider, useLanguage } from "./context/LanguageContext";
 import LanguageSwitcher from "./components/LanguageSwitcher";
 import { SinhalaFontProvider } from "./components/SinhalaTypography";
 import { LocalizedText, LocalizedTextInput } from "./components/LocalizedTypography";
+import StudentDashboard from "./components/StudentDashboard";
+import MyClassesScreen, { isValidClassList } from "./components/MyClassesScreen";
+import StudentQRCardScreen from "./components/StudentQRCardScreen";
+import LearningMaterialsScreen from "./components/LearningMaterialsScreen";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -79,11 +84,25 @@ function AppContent() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
+  const [selectedClass, setSelectedClass] = useState(null);
   const [teacherData, setTeacherData] = useState(null);
   const [teacherLoading, setTeacherLoading] = useState(false);
   const [teacherError, setTeacherError] = useState("");
   const [sessionError, setSessionError] = useState("");
   const sessionCheck = useRef(0);
+
+  useEffect(() => {
+    setSelectedClass(null);
+  }, [user?.id, user?.role]);
+
+  useEffect(() => {
+    if (!["myClasses", "studentQRCard", "learningMaterials"].includes(page) || role !== "student" || user?.role !== "student") return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      goBackFromStudentPage();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [page, role, user?.role]);
 
   useEffect(() => {
     restoreSession();
@@ -96,6 +115,7 @@ function AppContent() {
     const check = ++sessionCheck.current;
     const isCurrent = () => check === sessionCheck.current;
     setSessionError("");
+    setSelectedClass(null);
     setPage("checkingSession");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -153,6 +173,7 @@ function AppContent() {
   }
 
   function chooseRole(nextRole) {
+    setSelectedClass(null);
     setTeacherData(null);
     setTeacherError("");
     setTeacherLoading(false);
@@ -215,6 +236,7 @@ function AppContent() {
         setError({ key: "auth.roleMismatch" });
       } else {
         await SecureStore.setItemAsync("edutrack_token", data.token);
+        setSelectedClass(null);
         setUser(data.user);
         setPassword("");
         setPage("dashboard");
@@ -307,7 +329,40 @@ function AppContent() {
     }
   }
 
+  async function logOut() {
+    sessionCheck.current += 1;
+    setTeacherLoading(false);
+    try {
+      await SecureStore.deleteItemAsync("edutrack_token");
+      setUser(null);
+      setSelectedClass(null);
+      setPassword("");
+      setPage("welcome");
+    } catch {
+      Alert.alert(t("auth.logoutFailureTitle"), t("auth.logoutFailure"));
+    }
+  }
+
+  function goBackFromStudentPage() {
+    setSelectedClass(null);
+    setPage(page === "learningMaterials" ? "myClasses" : "dashboard");
+  }
+
+  function openStudentPage(nextPage) {
+    if (role !== "student" || user?.role !== "student") return;
+    setSelectedClass(null);
+    setPage(nextPage);
+  }
+
+  function selectStudentClass(classItem) {
+    if (page !== "myClasses" || role !== "student" || user?.role !== "student") return;
+    if (!isValidClassList([classItem])) return;
+    setSelectedClass(classItem);
+    setPage("learningMaterials");
+  }
+
   const info = ROLES[role];
+  const showLearningMaterials = page === "learningMaterials" && role === "student" && user?.role === "student";
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -317,6 +372,16 @@ function AppContent() {
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
+        {showLearningMaterials ? (
+          <View style={styles.materialsScreen}>
+            <LearningMaterialsScreen
+              key={selectedClass?.id || "unselected"}
+              selectedClass={selectedClass}
+              status="idle"
+              onBack={goBackFromStudentPage}
+            />
+          </View>
+        ) : (
         <ScrollView
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
@@ -517,7 +582,25 @@ function AppContent() {
             </View>
           )}
 
-          {page === "dashboard" && user && user.role === role && (
+          {page === "dashboard" && user && user.role === role && role === "student" && (
+            <StudentDashboard
+              student={user}
+              onLogout={logOut}
+              onMyClasses={() => openStudentPage("myClasses")}
+              onMyQRCard={() => openStudentPage("studentQRCard")}
+              onLearningMaterials={() => openStudentPage("learningMaterials")}
+            />
+          )}
+
+          {page === "myClasses" && user && user.role === role && role === "student" && (
+            <MyClassesScreen onBack={goBackFromStudentPage} onSelectClass={selectStudentClass} />
+          )}
+
+          {page === "studentQRCard" && user && user.role === role && role === "student" && (
+            <StudentQRCardScreen student={user} onBack={goBackFromStudentPage} />
+          )}
+
+          {page === "dashboard" && user && user.role === role && role === "teacher" && (
             <View>
               <LanguageSwitcher />
               <Text style={styles.tag}>EDUTRACK</Text>
@@ -565,31 +648,19 @@ function AppContent() {
 
               <Button
                 title={t("dashboard.logout")}
-                onPress={async () => {
-                  sessionCheck.current += 1;
-                  setTeacherLoading(false);
-                  try {
-                    await SecureStore.deleteItemAsync("edutrack_token");
-                    setUser(null);
-                    setPassword("");
-                    setPage("welcome");
-                  } catch {
-                    Alert.alert(
-                      t("auth.logoutFailureTitle"),
-                      t("auth.logoutFailure"),
-                    );
-                  }
-                }}
+                onPress={logOut}
               />
             </View>
           )}
         </ScrollView>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  materialsScreen: { flex: 1, width: "100%", maxWidth: 460, alignSelf: "center" },
   safe: {
     flex: 1,
     backgroundColor: "#F4F7FB",

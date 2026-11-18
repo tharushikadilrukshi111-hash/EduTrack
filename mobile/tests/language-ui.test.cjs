@@ -13,13 +13,14 @@ const tick = () => new Promise((done) => setImmediate(done));
 function environment() {
   const slots = [], effects = [], requests = [], writes = [], deletes = [], alerts = [];
   let token = null, readError = false, deleteError = false;
+  let hardwareBack = null;
   let cursor = 0, pending = [], locale = "en", savingResult = true;
   let save = async () => savingResult;
   let response = { ok: false, json: async () => ({ message: "Backend message" }) };
   const React = {
     createElement: (type, props, ...children) => {
       const merged = { ...props, ...(children.length ? { children } : {}) };
-      if (["LocalizedText", "LocalizedTextInput", "SinhalaText", "SinhalaTextInput"].includes(type.name)) return type(merged);
+      if (["LocalizedText", "LocalizedTextInput", "SinhalaText", "SinhalaTextInput", "StudentDashboard"].includes(type.name)) return type(merged);
       return { type, props: merged };
     },
     createContext: (value) => ({ value, Provider: "Provider" }),
@@ -35,13 +36,27 @@ function environment() {
       if (!(i in slots)) slots[i] = { current: initial };
       return slots[i];
     },
-    useEffect(fn) {
+    useEffect(fn, deps) {
       const i = cursor++;
-      if (!(i in slots)) { slots[i] = true; pending.push(fn); }
+      const previous = slots[i];
+      if (!previous || deps.some((value, j) => value !== previous.deps[j])) {
+        pending.push(() => {
+          previous?.cleanup?.();
+          const cleanup = fn();
+          slots[i] = { deps, cleanup };
+          return cleanup;
+        });
+      }
     },
   };
   const flatten = (s) => Array.isArray(s) ? Object.assign({}, ...s.map(flatten)) : s || {};
-  const native = new Proxy({ StyleSheet: { create: (s) => s, flatten }, Platform: { OS: "android" }, Alert: { alert: (...args) => alerts.push(args) } }, {
+  const native = new Proxy({
+    StyleSheet: { create: (s) => s, flatten }, Platform: { OS: "android" }, Alert: { alert: (...args) => alerts.push(args) },
+    BackHandler: { addEventListener: (_, callback) => {
+      hardwareBack = callback;
+      return { remove() { if (hardwareBack === callback) hardwareBack = null; } };
+    } },
+  }, {
     get: (object, key) => key in object ? object[key] : key,
   });
   const cache = {};
@@ -89,6 +104,7 @@ function environment() {
     setLocale: (next) => { locale = next; },
     setSave: (fn) => { save = fn; },
     setResponse: (value) => { response = value; },
+    hardwareBack: () => hardwareBack?.(),
     render(Component) {
       cursor = 0; pending = [];
       const tree = Component();
@@ -113,7 +129,8 @@ function text(tree) {
   return strings(tree).join(" ");
 }
 function button(tree, title) {
-  const node = all(tree).find((n) => n.props.title === title);
+  const node = all(tree).find((n) => n.props.title === title)
+    || all(tree).find((n) => ["TouchableOpacity", "Pressable"].includes(n.type) && text(n) === title);
   assert.ok(node, title); return node;
 }
 async function loginScreen(env, role = "student") {
@@ -327,7 +344,7 @@ test("restoration validates supported roles; Teacher expiry clears only authenti
     env.setResponse({ ok: true, status: 200, json: async () => ({ user }) });
     const AppContent = env.load("App.js").default().props.children[0].props.children[0].type;
     env.render(AppContent); await tick(); const tree = env.render(AppContent);
-    assert.equal(all(tree).some((n) => n.props.title === "Log out"), ["student", "teacher"].includes(role));
+      assert.equal(all(tree).some((n) => n.props.title === "Log out" || n.type === "TouchableOpacity" && text(n) === "Log out"), ["student", "teacher"].includes(role));
     if (["parent", "admin"].includes(role)) assert.match(text(tree), /Could not verify/);
   }
   const env = environment(), { AppContent } = await authenticatedDashboard(env, "teacher");
@@ -350,4 +367,105 @@ test("logout failure and Teacher session-read errors translate without losing th
   assert.equal(env.alerts[0][0], tr.t("auth.logoutFailureTitle"));
   assert.equal(env.alerts[0][1], tr.t("auth.logoutFailure"));
   assert.ok(text(env.render(AppContent)).includes(tr.t("dashboard.teacher")));
+});
+
+test("combined Student routes expose honest idle states and both Back paths without requests", async () => {
+  const env = environment(), { AppContent, user } = await authenticatedDashboard(env, "student");
+  const Classes = env.load("components/MyClassesScreen.js").default;
+  const QR = env.load("components/StudentQRCardScreen.js").default;
+  const Materials = env.load("components/LearningMaterialsScreen.js").default;
+  const count = env.requests.length;
+  const find = (tree, Component) => {
+    const node = all(tree).find((n) => n.type === Component); assert.ok(node); return node;
+  };
+  let tree = env.render(AppContent);
+  button(tree, "My Classes").props.onPress(); tree = env.render(AppContent);
+  let classes = find(tree, Classes);
+  assert.equal(classes.props.classes, undefined); assert.equal(classes.props.status, undefined);
+  assert.match(text(Classes(classes.props)), /Enrolled classes are not connected yet/);
+  assert.equal(env.hardwareBack(), true); tree = env.render(AppContent);
+  button(tree, "My QR Card").props.onPress(); tree = env.render(AppContent);
+  const qr = find(tree, QR); assert.equal(qr.props.student, user);
+  const qrTree = QR(qr.props);
+  assert.ok(text(qrTree).includes(user.name)); assert.ok(text(qrTree).includes(user.identifier));
+  assert.match(text(qrTree), /QR code not available yet/);
+  env.setLocale("si"); tree = env.render(AppContent);
+  const tr = env.load("localization/i18n.js").createI18n("si");
+  assert.ok(text(QR(find(tree, QR).props)).includes(tr.t("student.qrUnavailable")));
+  find(tree, QR).props.onBack(); tree = env.render(AppContent);
+  button(tree, tr.t("materials.title")).props.onPress(); tree = env.render(AppContent);
+  const materials = find(tree, Materials);
+  assert.equal(materials.props.selectedClass, null); assert.equal(materials.props.status, "idle");
+  assert.equal(materials.props.materials, undefined); assert.equal(materials.props.onDownload, undefined);
+  assert.equal(materials.props.onView, undefined);
+  assert.equal(all(tree).some((n) => n.type === "ScrollView"), false);
+  materials.props.onBack(); tree = env.render(AppContent); classes = find(tree, Classes);
+  classes.props.onBack(); tree = env.render(AppContent);
+  button(tree, tr.t("student.myClasses")).props.onPress(); tree = env.render(AppContent);
+  find(tree, Classes).props.onSelectClass(null); assert.ok(find(env.render(AppContent), Classes));
+  assert.equal(env.requests.length, count);
+});
+
+test("combined class-selection passes the original object, clears on Back and returns to Classes", async () => {
+  const env = environment(), { AppContent } = await authenticatedDashboard(env, "student");
+  const Classes = env.load("components/MyClassesScreen.js").default;
+  const Card = env.load("components/ClassCard.js").default;
+  const Materials = env.load("components/LearningMaterialsScreen.js").default;
+  const find = (tree, Component) => all(tree).find((n) => n.type === Component);
+  button(env.render(AppContent), "My Classes").props.onPress();
+  const screen = find(env.render(AppContent), Classes);
+  // Test-only supplied props exercise the future callback, never production fixtures.
+  const classInfo = { id: "test-class", name: "Original class", subject: "Original subject" };
+  const list = Classes({ ...screen.props, status: "success", classes: [classInfo] });
+  const card = Card(find(list, Card).props);
+  assert.equal(card.type, "Pressable"); assert.equal(card.props.accessibilityRole, "button");
+  assert.equal(Card({ classInfo }).type, "View");
+  card.props.onPress(); let tree = env.render(AppContent);
+  assert.equal(find(tree, Materials).props.selectedClass, classInfo);
+  env.setLocale("si"); tree = env.render(AppContent);
+  assert.equal(find(tree, Materials).props.selectedClass, classInfo);
+  assert.equal(env.hardwareBack(), true); tree = env.render(AppContent); assert.ok(find(tree, Classes));
+  find(tree, Classes).props.onBack(); tree = env.render(AppContent);
+  const tr = env.load("localization/i18n.js").createI18n("si");
+  button(tree, tr.t("materials.title")).props.onPress(); tree = env.render(AppContent);
+  assert.equal(find(tree, Materials).props.selectedClass, null);
+  assert.equal(env.requests.length, 1);
+});
+
+test("combined My Classes validates malformed results and preserves localized Retry", () => {
+  const env = environment(), Classes = env.load("components/MyClassesScreen.js").default;
+  let retries = 0;
+  for (const classes of [undefined, null, "invalid", {}, [null], [{}], [{ id: "one", name: {} }]]) {
+    const tree = Classes({ classes, status: "success", onBack() {}, onRetry: () => { retries++; } });
+    assert.match(text(tree), /class information could not be displayed/);
+    button(tree, "Retry").props.onPress();
+  }
+  assert.equal(retries, 7);
+  assert.match(text(Classes({ classes: [], status: "success" })), /No enrolled classes yet/);
+  const tree = Classes({ status: "error" });
+  assert.equal(all(tree).some((n) => n.type === "TouchableOpacity" && text(n) === "Retry"), false);
+});
+
+test("combined materials screen stays unavailable with empty native list and no fake downloads", () => {
+  const env = environment(), Materials = env.load("components/LearningMaterialsScreen.js").default;
+  for (const locale of ["en", "si"]) {
+    env.setLocale(locale);
+    const tree = env.render(() => Materials({ status: "idle", onBack() {} }));
+    const list = all(tree).find((n) => n.type === "FlatList"); assert.ok(list);
+    assert.equal(list.props.data.length, 0);
+    const tr = env.load("localization/i18n.js").createI18n(locale);
+    assert.ok(text(list.props.ListEmptyComponent).includes(tr.t("materials.unavailable")));
+    assert.equal(all(tree).some((n) => n.type === "ScrollView"), false);
+    assert.equal(all(list.props.ListHeaderComponent).find((n) => n.type === "TextInput").props.value, "");
+  }
+});
+
+test("combined Student-only controls are absent for Teachers", async () => {
+  const env = environment(), { AppContent } = await authenticatedDashboard(env, "teacher");
+  const tree = env.render(AppContent);
+  for (const title of ["My Classes", "My QR Card", "Learning materials"]) {
+    assert.equal(all(tree).some((n) => n.props.title === title || n.type === "TouchableOpacity" && text(n) === title), false);
+  }
+  assert.ok(button(tree, "Load Teacher Data"));
+  assert.equal(env.hardwareBack(), undefined);
 });
