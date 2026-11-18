@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
+import { SinhalaFontProvider } from "./components/SinhalaTypography";
 import {
   ActivityIndicator,
   Alert,
@@ -300,6 +301,7 @@ export default function App() {
   const info = ROLES[role];
 
   return (
+    <SinhalaFontProvider>
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="dark-content" />
 
@@ -567,6 +569,7 @@ export default function App() {
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </SinhalaFontProvider>
   );
 }
 
