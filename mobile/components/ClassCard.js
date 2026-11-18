@@ -1,16 +1,26 @@
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 // Presentation fields, independent of any future API response format.
-export default function ClassCard({ classInfo }) {
+export default function ClassCard({ classInfo, onPress }) {
   const { name, subject, teacherName, scheduleLabel } = classInfo;
+  const selectable = typeof onPress === "function";
+  const Container = selectable ? Pressable : View;
   return (
-    <View style={styles.card}>
+    <Container
+      style={styles.card}
+      {...(selectable ? {
+        onPress,
+        accessibilityRole: "button",
+        accessibilityLabel: `Learning materials for ${name}`,
+        accessibilityHint: "Opens this class's learning materials",
+      } : {})}
+    >
       {!!subject && <Text style={styles.subject}>{subject}</Text>}
       <Text style={styles.name}>{name}</Text>
       {!!teacherName && <Text style={styles.detail}>Teacher: {teacherName}</Text>}
       {!!scheduleLabel && <Text style={styles.detail}>{scheduleLabel}</Text>}
-    </View>
+    </Container>
   );
 }
 

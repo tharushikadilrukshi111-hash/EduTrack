@@ -20,7 +20,7 @@ export function isValidClassList(classes) {
 
 // UI props only; enrolled-class data will be connected when its API is available.
 // status: idle (not connected), loading, success, or error.
-export default function MyClassesScreen({ classes, status = "idle", onBack, onRetry }) {
+export default function MyClassesScreen({ classes, status = "idle", onBack, onRetry, onSelectClass }) {
   const invalidData = status === "success" && !isValidClassList(classes);
   const displayStatus = invalidData ? "error" : status;
   return (
@@ -67,7 +67,13 @@ export default function MyClassesScreen({ classes, status = "idle", onBack, onRe
         </View>
       )}
       {displayStatus === "success" && classes.length > 0 && (
-        classes.map((classItem) => <ClassCard key={classItem.id} classInfo={classItem} />)
+        classes.map((classItem) => (
+          <ClassCard
+            key={classItem.id}
+            classInfo={classItem}
+            onPress={typeof onSelectClass === "function" ? () => onSelectClass(classItem) : undefined}
+          />
+        ))
       )}
     </View>
   );

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import StudentDashboard from "./components/StudentDashboard";
-import MyClassesScreen from "./components/MyClassesScreen";
+import MyClassesScreen, { isValidClassList } from "./components/MyClassesScreen";
+import LearningMaterialsScreen from "./components/LearningMaterialsScreen";
 import StudentQRCardScreen from "./components/StudentQRCardScreen";
 import {
   ActivityIndicator,
@@ -75,6 +76,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
+  const [selectedClass, setSelectedClass] = useState(null);
   const [teacherData, setTeacherData] = useState(null);
   const [teacherLoading, setTeacherLoading] = useState(false);
   const [teacherError, setTeacherError] = useState("");
@@ -82,9 +84,13 @@ export default function App() {
   const sessionCheck = useRef(0);
 
   useEffect(() => {
-    if (!["myClasses", "studentQRCard"].includes(page) || role !== "student" || user?.role !== "student") return;
+    setSelectedClass(null);
+  }, [user?.id, user?.role]);
+
+  useEffect(() => {
+    if (!["myClasses", "studentQRCard", "learningMaterials"].includes(page) || role !== "student" || user?.role !== "student") return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      setPage("dashboard");
+      goBackFromStudentPage();
       return true;
     });
     return () => subscription.remove();
@@ -101,6 +107,7 @@ export default function App() {
     const check = ++sessionCheck.current;
     const isCurrent = () => check === sessionCheck.current;
     setSessionError("");
+    setSelectedClass(null);
     setPage("checkingSession");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -158,6 +165,7 @@ export default function App() {
   }
 
   function chooseRole(nextRole) {
+    setSelectedClass(null);
     setTeacherData(null);
     setTeacherError("");
     setTeacherLoading(false);
@@ -220,6 +228,7 @@ export default function App() {
         setError("This account cannot access the selected role.");
       } else {
         await SecureStore.setItemAsync("edutrack_token", data.token);
+        setSelectedClass(null);
         setUser(data.user);
         setPassword("");
         setPage("dashboard");
@@ -316,6 +325,7 @@ export default function App() {
     try {
       await SecureStore.deleteItemAsync("edutrack_token");
       setUser(null);
+      setSelectedClass(null);
       setPassword("");
       setPage("welcome");
     } catch {
@@ -326,7 +336,20 @@ export default function App() {
     }
   }
 
+  function goBackFromStudentPage() {
+    setSelectedClass(null);
+    setPage(page === "learningMaterials" ? "myClasses" : "dashboard");
+  }
+
+  function selectStudentClass(classItem) {
+    if (page !== "myClasses" || role !== "student" || user?.role !== "student") return;
+    if (!isValidClassList([classItem])) return;
+    setSelectedClass(classItem);
+    setPage("learningMaterials");
+  }
+
   const info = ROLES[role];
+  const showLearningMaterials = page === "learningMaterials" && role === "student" && user?.role === "student" && selectedClass;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -336,6 +359,15 @@ export default function App() {
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
+        {showLearningMaterials ? (
+          <View style={styles.materialsScreen}>
+            <LearningMaterialsScreen
+              selectedClass={selectedClass}
+              status="idle"
+              onBack={goBackFromStudentPage}
+            />
+          </View>
+        ) : (
         <ScrollView
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
@@ -535,13 +567,16 @@ export default function App() {
             <StudentDashboard
               student={user}
               onLogout={logOut}
-              onMyClasses={() => setPage("myClasses")}
+              onMyClasses={() => {
+                setSelectedClass(null);
+                setPage("myClasses");
+              }}
               onMyQRCard={() => setPage("studentQRCard")}
             />
           )}
 
           {page === "myClasses" && user && user.role === role && role === "student" && (
-            <MyClassesScreen onBack={() => setPage("dashboard")} />
+            <MyClassesScreen onBack={goBackFromStudentPage} onSelectClass={selectStudentClass} />
           )}
 
           {page === "studentQRCard" && user && user.role === role && role === "student" && (
@@ -597,12 +632,19 @@ export default function App() {
             </View>
           )}
         </ScrollView>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  materialsScreen: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 460,
+    alignSelf: "center",
+  },
   safe: {
     flex: 1,
     backgroundColor: "#F4F7FB",
