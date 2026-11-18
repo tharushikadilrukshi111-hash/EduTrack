@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
+import { LanguageProvider, useLanguage } from "./context/LanguageContext";
+import LanguageSwitcher from "./components/LanguageSwitcher";
 import {
   ActivityIndicator,
   Alert,
@@ -21,28 +23,28 @@ const TEAL = "#078692";
 
 const ROLES = {
   student: {
-    title: "Student sign in",
-    label: "Registration no. or email",
+    title: "login.studentTitle",
+    label: "login.registrationOrEmail",
     hint: "ET-2026-0142",
-    help: "First visit? Activate your student account",
+    help: "login.studentHelp",
   },
   teacher: {
-    title: "Educator sign in",
-    label: "Email address",
+    title: "login.teacherTitle",
+    label: "login.email",
     hint: "teacher@example.com",
-    help: "New educator? Create an account",
+    help: "login.teacherHelp",
   },
   parent: {
-    title: "Parent sign in",
-    label: "Email address",
+    title: "login.parentTitle",
+    label: "login.email",
     hint: "parent@example.com",
-    help: "Need access? Contact your educator",
+    help: "login.parentHelp",
   },
   admin: {
-    title: "Admin sign in",
-    label: "Work email",
+    title: "login.adminTitle",
+    label: "login.workEmail",
     hint: "admin@example.com",
-    help: "Administrator access is by invitation",
+    help: "login.adminHelp",
   },
 };
 
@@ -63,6 +65,11 @@ function Button({ title, onPress, disabled = false, light = false }) {
 }
 
 export default function App() {
+  return <LanguageProvider><AppContent /></LanguageProvider>;
+}
+
+function AppContent() {
+  const { t } = useLanguage();
   const [page, setPage] = useState("checkingSession");
   const [role, setRole] = useState("student");
   const [identifier, setIdentifier] = useState("");
@@ -136,7 +143,7 @@ export default function App() {
     } catch {
       if (isCurrent()) {
         setUser(null);
-        setSessionError("Could not verify your saved session. Check your connection and backend, then retry.");
+        setSessionError("auth.sessionVerificationFailure");
         setPage("sessionError");
       }
     } finally {
@@ -162,28 +169,26 @@ export default function App() {
     const id = identifier.trim();
 
     if (!id || !password) {
-      return setError("Please enter your login details and password.");
+      return setError({ key: "auth.requiredFields" });
     }
 
     if (
       (role !== "student" || id.includes("@")) &&
       !/^\S+@\S+\.\S+$/.test(id)
     ) {
-      return setError("Please enter a valid email address.");
+      return setError({ key: "auth.invalidEmail" });
     }
 
     if (password.length < 8) {
-      return setError("Password must have at least 8 characters.");
+      return setError({ key: "auth.shortPassword" });
     }
 
     if (role === "parent" || role === "admin") {
-      return setError(
-        "This login screen is ready. Backend access for this role is not added yet.",
-      );
+      return setError({ key: "auth.roleUnavailable" });
     }
 
     if (!API_URL) {
-      return setError("Set EXPO_PUBLIC_API_URL in mobile/.env first.");
+      return setError({ key: "auth.apiNotConfigured" });
     }
 
     setLoading(true);
@@ -202,9 +207,11 @@ export default function App() {
       const data = await response.json();
 
       if (!response.ok || !data.token || !data.user) {
-        setError(data.message || "Sign in failed.");
+        setError(typeof data.message === "string" && data.message
+          ? { message: data.message }
+          : { key: "auth.signInFailure" });
       } else if (data.user.role !== role) {
-        setError("This account cannot access the selected role.");
+        setError({ key: "auth.roleMismatch" });
       } else {
         await SecureStore.setItemAsync("edutrack_token", data.token);
         setUser(data.user);
@@ -212,7 +219,7 @@ export default function App() {
         setPage("dashboard");
       }
     } catch {
-      setError("Cannot reach the backend. Check Wi-Fi, IP address and server.");
+      setError({ key: "auth.connectionFailure" });
     } finally {
       setLoading(false);
     }
@@ -231,7 +238,7 @@ export default function App() {
 
     try {
       if (!API_URL) {
-        setTeacherError("Set EXPO_PUBLIC_API_URL in mobile/.env first.");
+        setTeacherError({ key: "auth.apiNotConfigured" });
         return;
       }
 
@@ -240,14 +247,14 @@ export default function App() {
         token = await SecureStore.getItemAsync("edutrack_token");
       } catch {
         if (isCurrent()) {
-          setTeacherError("Could not read your saved session. Please try again.");
+          setTeacherError({ key: "auth.sessionReadFailure" });
         }
         return;
       }
       if (!isCurrent()) return;
 
       if (!token) {
-        setTeacherError("No saved session found. Please log out and sign in again.");
+        setTeacherError({ key: "auth.noSavedSession" });
         return;
       }
 
@@ -262,7 +269,7 @@ export default function App() {
           await SecureStore.deleteItemAsync("edutrack_token");
         } catch {
           if (isCurrent()) {
-            setTeacherError("Your session expired, but the saved token could not be removed securely. Please retry or log out.");
+            setTeacherError({ key: "auth.expiredTokenRemovalFailure" });
           }
           return;
         }
@@ -271,26 +278,28 @@ export default function App() {
         setPassword("");
         setTeacherData(null);
         setPage("welcome");
-        Alert.alert("Session expired", "Your session is no longer authorized. Please sign in again.");
+        Alert.alert(t("auth.sessionExpiredTitle"), t("auth.sessionExpired"));
         return;
       }
       if (response.status === 403) {
-        setTeacherError("Access denied. A Teacher account is required.");
+        setTeacherError({ key: "auth.teacherAccessDenied" });
         return;
       }
 
       const data = await response.json();
       if (!isCurrent()) return;
       if (!response.ok) {
-        setTeacherError(data.message || "Could not load Teacher data.");
+        setTeacherError(typeof data.message === "string" && data.message
+          ? { message: data.message }
+          : { key: "auth.teacherDataFailure" });
       } else if (!data.user || data.user.role !== "teacher" || data.user.id !== user.id) {
-        setTeacherError("The backend returned unexpected Teacher data.");
+        setTeacherError({ key: "auth.unexpectedTeacherData" });
       } else {
         setTeacherData(data.user);
       }
     } catch {
       if (isCurrent()) {
-        setTeacherError("Could not load Teacher data. Check your connection and backend, then try again.");
+        setTeacherError({ key: "auth.teacherConnectionFailure" });
       }
     } finally {
       if (isCurrent()) setTeacherLoading(false);
@@ -314,16 +323,17 @@ export default function App() {
           {page === "checkingSession" && (
             <View>
               <ActivityIndicator color={TEAL} />
-              <Text style={styles.muted}>Checking your saved session...</Text>
+              <Text style={styles.muted}>{t("auth.checkingSession")}</Text>
             </View>
           )}
 
           {page === "sessionError" && (
             <View>
-              <Text style={styles.errorText}>{sessionError}</Text>
-              <Button title="Retry session check" onPress={restoreSession} />
+              <LanguageSwitcher />
+              <Text style={styles.errorText}>{sessionError ? t(sessionError) : ""}</Text>
+              <Button title={t("auth.retrySession")} onPress={restoreSession} />
               <Button
-                title="Continue to Welcome"
+                title={t("auth.continueToWelcome")}
                 onPress={() => {
                   sessionCheck.current += 1;
                   setPage("welcome");
@@ -334,9 +344,10 @@ export default function App() {
 
           {page === "welcome" && (
             <View>
-              <Text style={styles.tag}>EDUTRACK · LEARN. PRACTISE. GROW.</Text>
+              <LanguageSwitcher />
+              <Text style={styles.tag}>{t("welcome.tagline")}</Text>
 
-              <Text style={styles.title}>Learn with confidence</Text>
+              <Text style={styles.title}>{t("welcome.heading")}</Text>
 
               <View style={styles.art}>
                 <Text style={{ fontSize: 92 }}>📖</Text>
@@ -344,18 +355,17 @@ export default function App() {
               </View>
 
               <Text style={styles.bigTitle}>
-                A little practice.{"\n"}A clearer path ahead.
+                {t("welcome.description")}
               </Text>
 
               <Text style={styles.muted}>
-                Quizzes, class notes and meaningful progress — together in
-                EduTrack.
+                {t("welcome.supportingText")}
               </Text>
 
-              <Button title="Get started" onPress={() => setPage("roles")} />
+              <Button title={t("welcome.getStarted")} onPress={() => setPage("roles")} />
 
               <Text style={styles.small}>
-                Built for students, educators and families.
+                {t("welcome.audience")}
               </Text>
             </View>
           )}
@@ -363,25 +373,25 @@ export default function App() {
           {page === "roles" && (
             <View>
               <Text style={styles.back} onPress={() => setPage("welcome")}>
-                ‹ WELCOME
+                ‹ {t("welcome.back")}
               </Text>
 
-              <Text style={styles.title}>Your learning space</Text>
-              <Text style={styles.muted}>Choose how you use EduTrack.</Text>
+              <Text style={styles.title}>{t("roles.heading")}</Text>
+              <Text style={styles.muted}>{t("roles.description")}</Text>
 
               <View style={styles.studentCard}>
-                <Text style={styles.whiteSmall}>FOR LEARNERS</Text>
+                <Text style={styles.whiteSmall}>{t("roles.forLearners")}</Text>
 
                 <Text style={styles.studentTitle}>
-                  Make progress, every day.
+                  {t("roles.progress")}
                 </Text>
 
                 <Text style={styles.whiteSmall}>
-                  Take quizzes, revisit feedback and build confidence.
+                  {t("roles.studentDescription")}
                 </Text>
 
                 <Button
-                  title="I'm a student"
+                  title={t("roles.chooseStudent")}
                   light
                   onPress={() => chooseRole("student")}
                 />
@@ -391,32 +401,33 @@ export default function App() {
                 style={styles.roleCard}
                 onPress={() => chooseRole("teacher")}
               >
-                <Text style={styles.cardTitle}>Teacher / Lecturer</Text>
+                <Text style={styles.cardTitle}>{t("roles.teacher")}</Text>
                 <Text style={styles.muted}>
-                  Teach, assess and support your classes.
+                  {t("roles.teacherDescription")}
                 </Text>
-                <Text style={styles.link}>Continue as educator ›</Text>
+                <Text style={styles.link}>{t("roles.continueTeacher")}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.roleCard}
                 onPress={() => chooseRole("parent")}
               >
-                <Text style={styles.cardTitle}>Parent / Guardian</Text>
+                <Text style={styles.cardTitle}>{t("roles.parent")}</Text>
                 <Text style={styles.muted}>
-                  Follow your linked child's learning.
+                  {t("roles.parentDescription")}
                 </Text>
-                <Text style={styles.link}>Continue as parent ›</Text>
+                <Text style={styles.link}>{t("roles.continueParent")}</Text>
               </TouchableOpacity>
 
               <Text style={styles.link} onPress={() => chooseRole("admin")}>
-                Administrator access
+                {t("roles.adminAccess")}
               </Text>
             </View>
           )}
 
           {page === "login" && (
             <View>
+              <LanguageSwitcher />
               <Text
                 style={styles.back}
                 onPress={() => {
@@ -424,24 +435,24 @@ export default function App() {
                   setPage("roles");
                 }}
               >
-                ‹ SECURE ACCESS
+                ‹ {t("login.secureAccess")}
               </Text>
 
-              <Text style={styles.title}>{info.title}</Text>
-              <Text style={styles.link}>{role.toUpperCase()}</Text>
+              <Text style={styles.title}>{t(info.title)}</Text>
+              <Text style={styles.link}>{t(`roles.${role}`)}</Text>
 
               <Text style={styles.muted}>
-                Welcome back. Continue where you left off.
+                {t("login.welcomeBack")}
               </Text>
 
               {!!error && (
                 <View style={styles.errorBox}>
-                  <Text style={styles.errorTitle}>Sign-in unsuccessful</Text>
-                  <Text style={styles.errorText}>{error}</Text>
+                  <Text style={styles.errorTitle}>{t("login.unsuccessful")}</Text>
+                  <Text style={styles.errorText}>{error.key ? t(error.key) : error.message}</Text>
                 </View>
               )}
 
-              <Text style={styles.fieldLabel}>{info.label}</Text>
+              <Text style={styles.fieldLabel}>{t(info.label)}</Text>
               <TextInput
                 style={styles.input}
                 placeholder={info.hint}
@@ -452,39 +463,42 @@ export default function App() {
                 onChangeText={setIdentifier}
               />
 
-              <Text style={styles.fieldLabel}>Password</Text>
+              <Text style={styles.fieldLabel}>{t("login.password")}</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Enter your password"
+                placeholder={t("login.passwordPlaceholder")}
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry={!visible}
                 autoCapitalize="none"
               />
 
-              <Text style={styles.small}>At least 8 characters</Text>
+              <Text style={styles.small}>{t("login.passwordHint")}</Text>
 
               <Text style={styles.link} onPress={() => setVisible(!visible)}>
-                {visible ? "Hide password" : "Show password"}
+                {t(visible ? "login.hidePassword" : "login.showPassword")}
               </Text>
 
               <Text
                 style={styles.link}
                 onPress={() =>
                   Alert.alert(
-                    "Coming soon",
-                    "Password recovery needs a backend endpoint.",
+                    t("login.comingSoon"),
+                    t("login.passwordRecoveryUnavailable"),
                   )
                 }
               >
-                Forgot password?
+                {t("login.forgotPassword")}
               </Text>
 
               <View style={{ marginTop: 14 }}>
                 {loading ? (
-                  <ActivityIndicator color={TEAL} />
+                  <View accessibilityLiveRegion="polite">
+                    <ActivityIndicator color={TEAL} accessibilityLabel={t("common.loading")} />
+                    <Text style={styles.muted}>{t("common.loading")}</Text>
+                  </View>
                 ) : (
-                  <Button title="Sign in" onPress={signIn} />
+                  <Button title={t("login.signIn")} onPress={signIn} />
                 )}
               </View>
 
@@ -492,60 +506,64 @@ export default function App() {
                 style={styles.link}
                 onPress={() =>
                   Alert.alert(
-                    "Coming soon",
-                    "Account activation/registration will be implemented next.",
+                    t("login.comingSoon"),
+                    t("login.activationUnavailable"),
                   )
                 }
               >
-                {info.help}
+                {t(info.help)}
               </Text>
             </View>
           )}
 
           {page === "dashboard" && user && user.role === role && (
             <View>
+              <LanguageSwitcher />
               <Text style={styles.tag}>EDUTRACK</Text>
 
               <Text style={styles.bigTitle}>
-                {user?.role === "teacher"
-                  ? "Teacher dashboard"
-                  : "Student dashboard"}
+                {t(user?.role === "teacher" ? "dashboard.teacher" : "dashboard.student")}
               </Text>
 
               <Text style={styles.muted}>
-                Welcome, {user?.name || "EduTrack user"}!
+                {t("dashboard.welcome", { name: user?.name || t("dashboard.defaultUser") })}
               </Text>
 
               <View style={styles.roleCard}>
-                <Text style={styles.cardTitle}>✓ Login successful</Text>
+                <Text style={styles.cardTitle}>✓ {t("dashboard.loginSuccessful")}</Text>
                 <Text style={styles.muted}>
-                  Your full dashboard will be built next.
+                  {t("dashboard.comingSoon")}
                 </Text>
               </View>
 
               {role === "teacher" && user.role === "teacher" && (
                 <View style={styles.roleCard}>
                   <Button
-                    title="Load Teacher Data"
+                    title={t("dashboard.loadTeacherData")}
                     onPress={loadTeacherData}
                     disabled={teacherLoading}
                   />
-                  {teacherLoading && <ActivityIndicator color={TEAL} />}
+                  {teacherLoading && (
+                    <View accessibilityLiveRegion="polite">
+                      <ActivityIndicator color={TEAL} accessibilityLabel={t("common.loading")} />
+                      <Text style={styles.muted}>{t("common.loading")}</Text>
+                    </View>
+                  )}
                   {!!teacherError && (
-                    <Text style={styles.errorText}>{teacherError}</Text>
+                    <Text style={styles.errorText}>{teacherError.key ? t(teacherError.key) : teacherError.message}</Text>
                   )}
                   {teacherData && teacherData.id === user.id && (
                     <View>
                       <Text style={styles.cardTitle}>{teacherData.name}</Text>
-                      <Text style={styles.muted}>Role: {teacherData.role}</Text>
-                      <Text style={styles.muted}>Identifier: {teacherData.identifier}</Text>
+                      <Text style={styles.muted}>{t("dashboard.roleLabel")}: {teacherData.role}</Text>
+                      <Text style={styles.muted}>{t("dashboard.identifierLabel")}: {teacherData.identifier}</Text>
                     </View>
                   )}
                 </View>
               )}
 
               <Button
-                title="Log out"
+                title={t("dashboard.logout")}
                 onPress={async () => {
                   sessionCheck.current += 1;
                   setTeacherLoading(false);
@@ -556,8 +574,8 @@ export default function App() {
                     setPage("welcome");
                   } catch {
                     Alert.alert(
-                      "Logout failed",
-                      "Could not securely remove your saved session. Please try again.",
+                      t("auth.logoutFailureTitle"),
+                      t("auth.logoutFailure"),
                     );
                   }
                 }}
