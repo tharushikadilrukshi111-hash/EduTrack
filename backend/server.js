@@ -12,6 +12,7 @@ const userRoutes = require('./routes/users');
 const studentRoutes = require('./routes/students');
 const qrRoutes = require('./routes/qr');
 const classRoutes = require('./routes/classes');
+const materialRoutes = require('./routes/materials');
 
 const app = express();
 
@@ -172,6 +173,8 @@ app.use('/api/students', studentRoutes);
 app.use('/api/qr', qrRoutes);
 // Class management and enrolment
 app.use('/api/classes', classRoutes);
+// Learning materials upload and download
+app.use('/api/materials', materialRoutes);
 
 // Start backend server
 async function start() {
