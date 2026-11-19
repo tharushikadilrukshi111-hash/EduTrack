@@ -9,6 +9,7 @@ const cors = require('cors');
 const User = require('./models/User');
 const { requireAuth, requireRole } = require('./middleware/auth');
 const userRoutes = require('./routes/users');
+const studentRoutes = require('./routes/students');
 
 const app = express();
 
@@ -164,6 +165,7 @@ app.get(
 );
 
 app.use('/api/users', userRoutes);
+app.use('/api/students', studentRoutes);
 
 // Start backend server
 async function start() {
