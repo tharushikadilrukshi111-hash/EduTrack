@@ -1,3 +1,4 @@
+require('dns').setServers(['8.8.8.8','8.8.4.4']);
 require('dotenv').config();
 
 const express = require('express');
@@ -7,6 +8,11 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const User = require('./models/User');
 const { requireAuth, requireRole } = require('./middleware/auth');
+const userRoutes = require('./routes/users');
+const studentRoutes = require('./routes/students');
+const qrRoutes = require('./routes/qr');
+const classRoutes = require('./routes/classes');
+const materialRoutes = require('./routes/materials');
 
 const app = express();
 
@@ -160,6 +166,15 @@ app.get(
     }
   }
 );
+
+app.use('/api/users', userRoutes);
+app.use('/api/students', studentRoutes);
+// QR code generation and student identification
+app.use('/api/qr', qrRoutes);
+// Class management and enrolment
+app.use('/api/classes', classRoutes);
+// Learning materials upload and download
+app.use('/api/materials', materialRoutes);
 
 // Start backend server
 async function start() {
