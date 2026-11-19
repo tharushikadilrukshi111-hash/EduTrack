@@ -1,3 +1,4 @@
+require('dns').setServers(['8.8.8.8','8.8.4.4']);
 require('dotenv').config();
 
 const express = require('express');
@@ -7,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const User = require('./models/User');
 const { requireAuth, requireRole } = require('./middleware/auth');
+const userRoutes = require('./routes/users');
 
 const app = express();
 
@@ -160,6 +162,8 @@ app.get(
     }
   }
 );
+
+app.use('/api/users', userRoutes);
 
 // Start backend server
 async function start() {
