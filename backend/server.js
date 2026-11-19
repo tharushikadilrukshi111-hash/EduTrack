@@ -11,6 +11,7 @@ const { requireAuth, requireRole } = require('./middleware/auth');
 const userRoutes = require('./routes/users');
 const studentRoutes = require('./routes/students');
 const qrRoutes = require('./routes/qr');
+const classRoutes = require('./routes/classes');
 
 const app = express();
 
@@ -169,6 +170,8 @@ app.use('/api/users', userRoutes);
 app.use('/api/students', studentRoutes);
 // QR code generation and student identification
 app.use('/api/qr', qrRoutes);
+// Class management and enrolment
+app.use('/api/classes', classRoutes);
 
 // Start backend server
 async function start() {
