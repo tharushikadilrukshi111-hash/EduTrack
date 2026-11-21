@@ -369,20 +369,23 @@ test("logout failure and Teacher session-read errors translate without losing th
   assert.ok(text(env.render(AppContent)).includes(tr.t("dashboard.teacher")));
 });
 
-test("combined Student routes expose honest idle states and both Back paths without requests", async () => {
+test("combined Student routes keep QR and Materials offline and support both Back paths", async () => {
   const env = environment(), { AppContent, user } = await authenticatedDashboard(env, "student");
   const Classes = env.load("components/MyClassesScreen.js").default;
   const QR = env.load("components/StudentQRCardScreen.js").default;
   const Materials = env.load("components/LearningMaterialsScreen.js").default;
   const count = env.requests.length;
+  env.setResponse({ ok: true, json: async () => ({ count: 0, classes: [] }) });
   const find = (tree, Component) => {
     const node = all(tree).find((n) => n.type === Component); assert.ok(node); return node;
   };
   let tree = env.render(AppContent);
   button(tree, "My Classes").props.onPress(); tree = env.render(AppContent);
   let classes = find(tree, Classes);
-  assert.equal(classes.props.classes, undefined); assert.equal(classes.props.status, undefined);
-  assert.match(text(Classes(classes.props)), /Enrolled classes are not connected yet/);
+  assert.equal(classes.props.classes, undefined); assert.equal(classes.props.status, "loading");
+  await tick();
+  classes = find(env.render(AppContent), Classes);
+  assert.match(text(Classes(classes.props)), /No enrolled classes yet/);
   assert.equal(env.hardwareBack(), true); tree = env.render(AppContent);
   button(tree, "My QR Card").props.onPress(); tree = env.render(AppContent);
   const qr = find(tree, QR); assert.equal(qr.props.student, user);
@@ -399,11 +402,12 @@ test("combined Student routes expose honest idle states and both Back paths with
   assert.equal(materials.props.materials, undefined); assert.equal(materials.props.onDownload, undefined);
   assert.equal(materials.props.onView, undefined);
   assert.equal(all(tree).some((n) => n.type === "ScrollView"), false);
+  assert.equal(env.requests.length, count + 1);
   materials.props.onBack(); tree = env.render(AppContent); classes = find(tree, Classes);
   classes.props.onBack(); tree = env.render(AppContent);
   button(tree, tr.t("student.myClasses")).props.onPress(); tree = env.render(AppContent);
   find(tree, Classes).props.onSelectClass(null); assert.ok(find(env.render(AppContent), Classes));
-  assert.equal(env.requests.length, count);
+  env.unmount();
 });
 
 test("combined class-selection passes the original object, clears on Back and returns to Classes", async () => {
@@ -412,11 +416,15 @@ test("combined class-selection passes the original object, clears on Back and re
   const Card = env.load("components/ClassCard.js").default;
   const Materials = env.load("components/LearningMaterialsScreen.js").default;
   const find = (tree, Component) => all(tree).find((n) => n.type === Component);
+  const item = { id: "test-class", name: "Original class", subject: "Original subject" };
+  env.setResponse({ ok: true, json: async () => ({ count: 1, classes: [item] }) });
   button(env.render(AppContent), "My Classes").props.onPress();
+  env.render(AppContent); await tick();
   const screen = find(env.render(AppContent), Classes);
-  // Test-only supplied props exercise the future callback, never production fixtures.
-  const classInfo = { id: "test-class", name: "Original class", subject: "Original subject" };
-  const list = Classes({ ...screen.props, status: "success", classes: [classInfo] });
+  assert.equal(screen.props.status, "success");
+  const [classInfo] = screen.props.classes;
+  assert.equal(classInfo.id, item.id);
+  const list = Classes(screen.props);
   const card = Card(find(list, Card).props);
   assert.equal(card.type, "Pressable"); assert.equal(card.props.accessibilityRole, "button");
   assert.equal(Card({ classInfo }).type, "View");
@@ -429,7 +437,90 @@ test("combined class-selection passes the original object, clears on Back and re
   const tr = env.load("localization/i18n.js").createI18n("si");
   button(tree, tr.t("materials.title")).props.onPress(); tree = env.render(AppContent);
   assert.equal(find(tree, Materials).props.selectedClass, null);
-  assert.equal(env.requests.length, 1);
+  assert.equal(env.requests.length, 2);
+  env.unmount();
+});
+
+test("My Classes adapter sends the saved bearer token and maps only card fields", async () => {
+  const env = environment();
+  const { fetchStudentClasses } = env.load("api/studentClasses.js");
+  const signal = new AbortController().signal;
+  const options = { apiUrl: "http://test.invalid/", readToken: async () => "test-token", signal };
+  const item = { id: "class-id", name: "Class", subject: "Subject", teacherId: "teacher-id",
+    schedule: [{ day: "Monday", startTime: "09:00", endTime: "10:00" }] };
+  env.setResponse({ ok: true, json: async () => ({ count: 1, classes: [item] }) });
+  const result = await fetchStudentClasses(options);
+  assert.equal(result.status, "success");
+  assert.equal(result.classes[0].scheduleLabel, "Monday 09:00–10:00");
+  assert.deepEqual(Object.keys(result.classes[0]).sort(), ["id", "name", "scheduleLabel", "subject"]);
+  assert.equal(env.requests[0].url, "http://test.invalid/api/classes");
+  assert.equal(env.requests[0].options.method, "GET");
+  assert.equal(env.requests[0].options.headers.Authorization, "Bearer test-token");
+  assert.equal(env.requests[0].options.signal, signal);
+  for (const [status, key] of [[401, "auth.sessionExpired"], [403, "student.classesAccessDenied"],
+    [404, "student.classesNotFound"], [500, "student.classesRequestFailed"]]) {
+    env.setResponse({ ok: false, status });
+    assert.equal((await fetchStudentClasses(options)).errorKey, key);
+  }
+  for (const payload of [null, { classes: [] }, { count: 1, classes: [] },
+    { count: 2, classes: [item, item] }, { count: 1, classes: [{ ...item, schedule: [{}] }] }]) {
+    env.setResponse({ ok: true, json: async () => payload });
+    assert.equal((await fetchStudentClasses(options)).errorKey, "student.classesInvalid");
+  }
+  env.setResponse({ ok: true, json: async () => { throw new SyntaxError(); } });
+  assert.equal((await fetchStudentClasses(options)).errorKey, "student.classesInvalid");
+  env.setResponse(() => { throw new Error("network unavailable"); });
+  assert.equal((await fetchStudentClasses(options)).errorKey, "student.connectionError");
+  const requestCount = env.requests.length;
+  assert.equal((await fetchStudentClasses({ ...options, readToken: async () => null })).errorKey, "auth.noSavedSession");
+  assert.equal((await fetchStudentClasses({ ...options, readToken: async () => { throw new Error(); } })).errorKey, "auth.sessionReadFailure");
+  assert.equal(env.requests.length, requestCount);
+});
+
+test("Retry refetches and a previous Student response cannot replace a new session’s classes", async () => {
+  const env = environment(), { AppContent } = await authenticatedDashboard(env, "student");
+  const Classes = env.load("components/MyClassesScreen.js").default;
+  const find = (tree) => all(tree).find((n) => n.type === Classes);
+  const open = () => {
+    button(env.render(AppContent), "My Classes").props.onPress();
+    return find(env.render(AppContent)).props;
+  };
+  env.setResponse({ ok: false, status: 404 });
+  assert.equal(open().status, "loading");
+  await tick();
+  const failed = find(env.render(AppContent)).props;
+  assert.equal(failed.errorKey, "student.classesNotFound");
+  assert.doesNotMatch(text(Classes(failed)), /No enrolled classes/);
+
+  let resolveOld;
+  env.setResponse(() => new Promise((resolve) => { resolveOld = resolve; }));
+  button(Classes(failed), "Retry").props.onPress();
+  assert.equal(find(env.render(AppContent)).props.status, "loading");
+  await tick();
+  const oldSignal = env.requests.at(-1).options.signal;
+  env.hardwareBack();
+  await button(env.render(AppContent), "Log out").props.onPress();
+  assert.equal(oldSignal.aborted, true);
+
+  button(env.render(AppContent), "Get started").props.onPress();
+  button(env.render(AppContent), "I'm a student").props.onPress();
+  const inputs = all(env.render(AppContent)).filter((n) => n.type === "TextInput");
+  inputs[0].props.onChangeText("OTHER-STUDENT");
+  inputs[1].props.onChangeText("test-password");
+  env.setResponse({ ok: true, json: async () => ({ token: "other-token", user: {
+    id: "other-id", role: "student", name: "Other Student", identifier: "OTHER-STUDENT",
+  } }) });
+  await button(env.render(AppContent), "Sign in").props.onPress();
+  env.setResponse({ ok: true, json: async () => ({ count: 0, classes: [] }) });
+  assert.equal(open().status, "loading");
+  await tick();
+  resolveOld({ ok: true, json: async () => ({ count: 1, classes: [{ id: "old", name: "Old class" }] }) });
+  await tick();
+  const current = find(env.render(AppContent)).props;
+  assert.equal(current.status, "success");
+  assert.equal(current.classes.length, 0);
+  assert.equal(env.requests.at(-1).options.headers.Authorization, "Bearer other-token");
+  env.unmount();
 });
 
 test("combined My Classes validates malformed results and preserves localized Retry", () => {

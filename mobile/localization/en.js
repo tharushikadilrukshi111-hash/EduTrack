@@ -71,7 +71,9 @@ export default {
   student: {
     myClasses: "My Classes", myQRCard: "My QR Card", back: "Student dashboard",
     classesDescription: "Your enrolled classes, all in one place.",
-    noClasses: "No classes to display", classesUnavailable: "Enrolled classes are not connected yet. Your classes will appear here once this feature is available.",
+    classesAccessDenied: "Your account does not have access to My Classes.",
+    classesNotFound: "My Classes could not be found. Ask your teacher to check your student registration.",
+    classesRequestFailed: "The server could not load your classes. Please try again.",
     classesLoading: "Loading your classes...", classesError: "Could not load your classes",
     classesInvalid: "The class information could not be displayed. Please try again.",
     connectionError: "Please check your connection and try again.",

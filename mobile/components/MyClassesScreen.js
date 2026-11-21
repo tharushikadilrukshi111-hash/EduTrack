@@ -4,26 +4,9 @@ import ClassCard from "./ClassCard";
 import { useLanguage } from "../context/LanguageContext";
 import { LocalizedText } from "./LocalizedTypography";
 import LanguageSwitcher from "./LanguageSwitcher";
+import { isValidClassList } from "../api/studentClasses";
 
-// Validate presentation data without treating missing or malformed results as empty.
-export function isValidClassList(classes) {
-  if (!Array.isArray(classes)) return false;
-  const ids = new Set();
-  for (const item of classes) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
-    if (typeof item.id !== "string" || !item.id.trim() || ids.has(item.id)) return false;
-    if (typeof item.name !== "string" || !item.name.trim()) return false;
-    for (const field of ["subject", "teacherName", "scheduleLabel"]) {
-      if (item[field] != null && typeof item[field] !== "string") return false;
-    }
-    ids.add(item.id);
-  }
-  return true;
-}
-
-// UI props only; enrolled-class data will be connected when its API is available.
-// status: idle (not connected), loading, success, or error.
-export default function MyClassesScreen({ classes, status = "idle", onBack, onRetry, onSelectClass }) {
+export default function MyClassesScreen({ classes, status = "loading", errorKey, onBack, onRetry, onSelectClass }) {
   const { t } = useLanguage();
   const invalidData = status === "success" && !isValidClassList(classes);
   const displayStatus = invalidData ? "error" : status;
@@ -36,12 +19,6 @@ export default function MyClassesScreen({ classes, status = "idle", onBack, onRe
       <Text style={styles.tag}>EDUTRACK</Text>
       <LocalizedText style={styles.title} accessibilityRole="header">{t("student.myClasses")}</LocalizedText>
       <LocalizedText style={styles.description}>{t("student.classesDescription")}</LocalizedText>
-      {displayStatus === "idle" && (
-        <View style={styles.empty}>
-          <LocalizedText style={styles.emptyTitle}>{t("student.noClasses")}</LocalizedText>
-          <LocalizedText style={styles.emptyText}>{t("student.classesUnavailable")}</LocalizedText>
-        </View>
-      )}
       {displayStatus === "loading" && (
         <View style={styles.empty} accessibilityLiveRegion="polite">
           <ActivityIndicator color="#078692" accessibilityLabel={t("student.classesLoading")} />
@@ -54,7 +31,7 @@ export default function MyClassesScreen({ classes, status = "idle", onBack, onRe
           <LocalizedText style={styles.emptyText}>
             {invalidData
               ? t("student.classesInvalid")
-              : t("student.connectionError")}
+              : t(errorKey || "student.connectionError")}
           </LocalizedText>
           {typeof onRetry === "function" && (
             <TouchableOpacity onPress={onRetry} accessibilityRole="button" style={styles.retry}>

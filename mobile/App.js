@@ -5,7 +5,8 @@ import LanguageSwitcher from "./components/LanguageSwitcher";
 import { SinhalaFontProvider } from "./components/SinhalaTypography";
 import { LocalizedText, LocalizedTextInput } from "./components/LocalizedTypography";
 import StudentDashboard from "./components/StudentDashboard";
-import MyClassesScreen, { isValidClassList } from "./components/MyClassesScreen";
+import MyClassesScreen from "./components/MyClassesScreen";
+import { fetchStudentClasses, isValidClassList } from "./api/studentClasses";
 import StudentQRCardScreen from "./components/StudentQRCardScreen";
 import LearningMaterialsScreen from "./components/LearningMaterialsScreen";
 import {
@@ -85,11 +86,41 @@ function AppContent() {
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
   const [selectedClass, setSelectedClass] = useState(null);
+  const [classList, setClassList] = useState(null);
+  const [classAttempt, setClassAttempt] = useState(0);
   const [teacherData, setTeacherData] = useState(null);
   const [teacherLoading, setTeacherLoading] = useState(false);
   const [teacherError, setTeacherError] = useState("");
   const [sessionError, setSessionError] = useState("");
   const sessionCheck = useRef(0);
+  const studentId = role === "student" && user?.role === "student" ? user.id : null;
+
+  useEffect(() => {
+    if (page !== "myClasses" || !studentId) return;
+
+    const session = sessionCheck.current;
+    const controller = new AbortController();
+    const isCurrent = () => !controller.signal.aborted && sessionCheck.current === session;
+    const publish = (result) => setClassList({ studentId, session, attempt: classAttempt, result });
+    const timeout = setTimeout(() => {
+      if (isCurrent()) publish({ status: "error", errorKey: "student.connectionError" });
+      controller.abort();
+    }, 10000);
+
+    fetchStudentClasses({
+      apiUrl: API_URL,
+      readToken: () => SecureStore.getItemAsync("edutrack_token"),
+      signal: controller.signal,
+    }).then((result) => {
+      clearTimeout(timeout);
+      if (isCurrent()) publish(result);
+    });
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [page, studentId, classAttempt]);
 
   useEffect(() => {
     setSelectedClass(null);
@@ -331,6 +362,7 @@ function AppContent() {
 
   async function logOut() {
     sessionCheck.current += 1;
+    setClassList(null);
     setTeacherLoading(false);
     try {
       await SecureStore.deleteItemAsync("edutrack_token");
@@ -345,12 +377,14 @@ function AppContent() {
 
   function goBackFromStudentPage() {
     setSelectedClass(null);
+    setClassList(null);
     setPage(page === "learningMaterials" ? "myClasses" : "dashboard");
   }
 
   function openStudentPage(nextPage) {
     if (role !== "student" || user?.role !== "student") return;
     setSelectedClass(null);
+    setClassList(null);
     setPage(nextPage);
   }
 
@@ -362,6 +396,9 @@ function AppContent() {
   }
 
   const info = ROLES[role];
+  const classResult = classList && classList.studentId === studentId &&
+    classList.session === sessionCheck.current && classList.attempt === classAttempt
+    ? classList.result : null;
   const showLearningMaterials = page === "learningMaterials" && role === "student" && user?.role === "student";
 
   return (
@@ -593,7 +630,12 @@ function AppContent() {
           )}
 
           {page === "myClasses" && user && user.role === role && role === "student" && (
-            <MyClassesScreen onBack={goBackFromStudentPage} onSelectClass={selectStudentClass} />
+            <MyClassesScreen
+              {...(classResult || { status: "loading" })}
+              onBack={goBackFromStudentPage}
+              onRetry={() => setClassAttempt(classAttempt + 1)}
+              onSelectClass={selectStudentClass}
+            />
           )}
 
           {page === "studentQRCard" && user && user.role === role && role === "student" && (
