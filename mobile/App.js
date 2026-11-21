@@ -1,8 +1,29 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
+import { LanguageProvider, useLanguage } from "./context/LanguageContext";
+import LanguageSwitcher from "./components/LanguageSwitcher";
+import { SinhalaFontProvider } from "./components/SinhalaTypography";
+import {
+  LocalizedText,
+  LocalizedTextInput,
+} from "./components/LocalizedTypography";
+import StudentDashboard from "./components/StudentDashboard";
+import MyClassesScreen from "./components/MyClassesScreen";
+import { fetchStudentClasses, isValidClassList } from "./api/studentClasses";
+import { fetchStudentMaterials } from "./api/studentMaterials";
+import StudentQRCardScreen from "./components/StudentQRCardScreen";
+import { fetchStudentQR } from "./api/studentQR";
+import LearningMaterialsScreen from "./components/LearningMaterialsScreen";
+import {
+  downloadStudentPdf,
+  getDownloadedPdfIds,
+  isPdfMaterial,
+  viewSavedPdf,
+} from "./api/studentPdfDownloads";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -10,7 +31,6 @@ import {
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -21,28 +41,28 @@ const TEAL = "#078692";
 
 const ROLES = {
   student: {
-    title: "Student sign in",
-    label: "Registration no. or email",
+    title: "login.studentTitle",
+    label: "login.registrationOrEmail",
     hint: "ET-2026-0142",
-    help: "First visit? Activate your student account",
+    help: "login.studentHelp",
   },
   teacher: {
-    title: "Educator sign in",
-    label: "Email address",
+    title: "login.teacherTitle",
+    label: "login.email",
     hint: "teacher@example.com",
-    help: "New educator? Create an account",
+    help: "login.teacherHelp",
   },
   parent: {
-    title: "Parent sign in",
-    label: "Email address",
+    title: "login.parentTitle",
+    label: "login.email",
     hint: "parent@example.com",
-    help: "Need access? Contact your educator",
+    help: "login.parentHelp",
   },
   admin: {
-    title: "Admin sign in",
-    label: "Work email",
+    title: "login.adminTitle",
+    label: "login.workEmail",
     hint: "admin@example.com",
-    help: "Administrator access is by invitation",
+    help: "login.adminHelp",
   },
 };
 
@@ -57,12 +77,25 @@ function Button({ title, onPress, disabled = false, light = false }) {
         disabled && { opacity: 0.6 },
       ]}
     >
-      <Text style={[styles.buttonText, light && { color: BLUE }]}>{title}</Text>
+      <LocalizedText style={[styles.buttonText, light && { color: BLUE }]}>
+        {title}
+      </LocalizedText>
     </TouchableOpacity>
   );
 }
 
 export default function App() {
+  return (
+    <LanguageProvider>
+      <SinhalaFontProvider>
+        <AppContent />
+      </SinhalaFontProvider>
+    </LanguageProvider>
+  );
+}
+
+function AppContent() {
+  const { t } = useLanguage();
   const [page, setPage] = useState("checkingSession");
   const [role, setRole] = useState("student");
   const [identifier, setIdentifier] = useState("");
@@ -71,11 +104,143 @@ export default function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
+  const [selectedClass, setSelectedClass] = useState(null);
+  const [pdfState, setPdfState] = useState(null);
+  const pdfScope = useRef(null);
+  const [classList, setClassList] = useState(null);
+  const [classAttempt, setClassAttempt] = useState(0);
+  const [materialList, setMaterialList] = useState(null);
+  const [materialAttempt, setMaterialAttempt] = useState(0);
   const [teacherData, setTeacherData] = useState(null);
   const [teacherLoading, setTeacherLoading] = useState(false);
   const [teacherError, setTeacherError] = useState("");
   const [sessionError, setSessionError] = useState("");
   const sessionCheck = useRef(0);
+  const qrRequest = useRef(null);
+  const [qrResult, setQrResult] = useState(null);
+  const [qrAttempt, setQrAttempt] = useState(0);
+  const studentId =
+    role === "student" && user?.role === "student" ? user.id : null;
+  const materialClassId =
+    page === "learningMaterials" ? selectedClass?.id : null;
+
+  useEffect(() => {
+    if (page !== "studentQRCard" || !studentId) return;
+
+    const session = sessionCheck.current;
+    const controller = new AbortController();
+    qrRequest.current = controller;
+    const isCurrent = () => !controller.signal.aborted && session === sessionCheck.current;
+    const publish = (result) => setQrResult({ studentId, session, attempt: qrAttempt, result });
+    const timeout = setTimeout(() => {
+      if (isCurrent()) publish({ status: "error", errorKey: "student.connectionError" });
+      controller.abort();
+    }, 10000);
+
+    fetchStudentQR({
+      apiUrl: API_URL,
+      accountId: studentId,
+      readToken: () => SecureStore.getItemAsync("edutrack_token"),
+      signal: controller.signal,
+    }).then((result) => {
+      clearTimeout(timeout);
+      if (isCurrent()) publish(result);
+    });
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+      if (qrRequest.current === controller) qrRequest.current = null;
+    };
+  }, [page, studentId, qrAttempt]);
+
+  useEffect(() => {
+    if (page !== "myClasses" || !studentId) return;
+
+    const session = sessionCheck.current;
+    const controller = new AbortController();
+    const isCurrent = () =>
+      !controller.signal.aborted && sessionCheck.current === session;
+    const publish = (result) =>
+      setClassList({ studentId, session, attempt: classAttempt, result });
+    const timeout = setTimeout(() => {
+      if (isCurrent())
+        publish({ status: "error", errorKey: "student.connectionError" });
+      controller.abort();
+    }, 10000);
+
+    fetchStudentClasses({
+      apiUrl: API_URL,
+      readToken: () => SecureStore.getItemAsync("edutrack_token"),
+      signal: controller.signal,
+    }).then((result) => {
+      clearTimeout(timeout);
+      if (isCurrent()) publish(result);
+    });
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [page, studentId, classAttempt]);
+
+  useEffect(() => {
+    if (!materialClassId || !studentId) return;
+
+    const session = sessionCheck.current;
+    const controller = new AbortController();
+    const isCurrent = () =>
+      !controller.signal.aborted && sessionCheck.current === session;
+    const publish = (result) =>
+      setMaterialList({
+        classId: materialClassId,
+        studentId,
+        session,
+        attempt: materialAttempt,
+        result,
+      });
+    const timeout = setTimeout(() => {
+      if (isCurrent())
+        publish({ status: "error", errorKey: "materials.connectionError" });
+      controller.abort();
+    }, 10000);
+
+    fetchStudentMaterials({
+      apiUrl: API_URL,
+      classId: materialClassId,
+      readToken: () => SecureStore.getItemAsync("edutrack_token"),
+      signal: controller.signal,
+    }).then((result) => {
+      clearTimeout(timeout);
+      if (isCurrent()) publish(result);
+    });
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [materialClassId, studentId, materialAttempt]);
+
+  useEffect(() => {
+    setSelectedClass(null);
+  }, [user?.id, user?.role]);
+
+  useEffect(() => {
+    if (
+      !["myClasses", "studentQRCard", "learningMaterials"].includes(page) ||
+      role !== "student" ||
+      user?.role !== "student"
+    )
+      return;
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        goBackFromStudentPage();
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [page, role, user?.role]);
 
   useEffect(() => {
     restoreSession();
@@ -88,6 +253,7 @@ export default function App() {
     const check = ++sessionCheck.current;
     const isCurrent = () => check === sessionCheck.current;
     setSessionError("");
+    setSelectedClass(null);
     setPage("checkingSession");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -123,7 +289,8 @@ export default function App() {
       if (
         !data.user ||
         !["student", "teacher"].includes(data.user.role) ||
-        typeof data.user.id !== "string" || !data.user.id ||
+        typeof data.user.id !== "string" ||
+        !data.user.id ||
         typeof data.user.name !== "string" ||
         typeof data.user.identifier !== "string"
       ) {
@@ -136,7 +303,7 @@ export default function App() {
     } catch {
       if (isCurrent()) {
         setUser(null);
-        setSessionError("Could not verify your saved session. Check your connection and backend, then retry.");
+        setSessionError("auth.sessionVerificationFailure");
         setPage("sessionError");
       }
     } finally {
@@ -145,6 +312,7 @@ export default function App() {
   }
 
   function chooseRole(nextRole) {
+    setSelectedClass(null);
     setTeacherData(null);
     setTeacherError("");
     setTeacherLoading(false);
@@ -162,28 +330,26 @@ export default function App() {
     const id = identifier.trim();
 
     if (!id || !password) {
-      return setError("Please enter your login details and password.");
+      return setError({ key: "auth.requiredFields" });
     }
 
     if (
       (role !== "student" || id.includes("@")) &&
       !/^\S+@\S+\.\S+$/.test(id)
     ) {
-      return setError("Please enter a valid email address.");
+      return setError({ key: "auth.invalidEmail" });
     }
 
     if (password.length < 8) {
-      return setError("Password must have at least 8 characters.");
+      return setError({ key: "auth.shortPassword" });
     }
 
     if (role === "parent" || role === "admin") {
-      return setError(
-        "This login screen is ready. Backend access for this role is not added yet.",
-      );
+      return setError({ key: "auth.roleUnavailable" });
     }
 
     if (!API_URL) {
-      return setError("Set EXPO_PUBLIC_API_URL in mobile/.env first.");
+      return setError({ key: "auth.apiNotConfigured" });
     }
 
     setLoading(true);
@@ -202,17 +368,22 @@ export default function App() {
       const data = await response.json();
 
       if (!response.ok || !data.token || !data.user) {
-        setError(data.message || "Sign in failed.");
+        setError(
+          typeof data.message === "string" && data.message
+            ? { message: data.message }
+            : { key: "auth.signInFailure" },
+        );
       } else if (data.user.role !== role) {
-        setError("This account cannot access the selected role.");
+        setError({ key: "auth.roleMismatch" });
       } else {
         await SecureStore.setItemAsync("edutrack_token", data.token);
+        setSelectedClass(null);
         setUser(data.user);
         setPassword("");
         setPage("dashboard");
       }
     } catch {
-      setError("Cannot reach the backend. Check Wi-Fi, IP address and server.");
+      setError({ key: "auth.connectionFailure" });
     } finally {
       setLoading(false);
     }
@@ -231,7 +402,7 @@ export default function App() {
 
     try {
       if (!API_URL) {
-        setTeacherError("Set EXPO_PUBLIC_API_URL in mobile/.env first.");
+        setTeacherError({ key: "auth.apiNotConfigured" });
         return;
       }
 
@@ -240,14 +411,14 @@ export default function App() {
         token = await SecureStore.getItemAsync("edutrack_token");
       } catch {
         if (isCurrent()) {
-          setTeacherError("Could not read your saved session. Please try again.");
+          setTeacherError({ key: "auth.sessionReadFailure" });
         }
         return;
       }
       if (!isCurrent()) return;
 
       if (!token) {
-        setTeacherError("No saved session found. Please log out and sign in again.");
+        setTeacherError({ key: "auth.noSavedSession" });
         return;
       }
 
@@ -262,7 +433,7 @@ export default function App() {
           await SecureStore.deleteItemAsync("edutrack_token");
         } catch {
           if (isCurrent()) {
-            setTeacherError("Your session expired, but the saved token could not be removed securely. Please retry or log out.");
+            setTeacherError({ key: "auth.expiredTokenRemovalFailure" });
           }
           return;
         }
@@ -271,33 +442,178 @@ export default function App() {
         setPassword("");
         setTeacherData(null);
         setPage("welcome");
-        Alert.alert("Session expired", "Your session is no longer authorized. Please sign in again.");
+        Alert.alert(t("auth.sessionExpiredTitle"), t("auth.sessionExpired"));
         return;
       }
       if (response.status === 403) {
-        setTeacherError("Access denied. A Teacher account is required.");
+        setTeacherError({ key: "auth.teacherAccessDenied" });
         return;
       }
 
       const data = await response.json();
       if (!isCurrent()) return;
       if (!response.ok) {
-        setTeacherError(data.message || "Could not load Teacher data.");
-      } else if (!data.user || data.user.role !== "teacher" || data.user.id !== user.id) {
-        setTeacherError("The backend returned unexpected Teacher data.");
+        setTeacherError(
+          typeof data.message === "string" && data.message
+            ? { message: data.message }
+            : { key: "auth.teacherDataFailure" },
+        );
+      } else if (
+        !data.user ||
+        data.user.role !== "teacher" ||
+        data.user.id !== user.id
+      ) {
+        setTeacherError({ key: "auth.unexpectedTeacherData" });
       } else {
         setTeacherData(data.user);
       }
     } catch {
       if (isCurrent()) {
-        setTeacherError("Could not load Teacher data. Check your connection and backend, then try again.");
+        setTeacherError({ key: "auth.teacherConnectionFailure" });
       }
     } finally {
       if (isCurrent()) setTeacherLoading(false);
     }
   }
 
+  async function logOut() {
+    sessionCheck.current += 1;
+    qrRequest.current?.abort();
+    setQrResult(null);
+    pdfScope.current?.controller.abort();
+    setClassList(null);
+    setTeacherLoading(false);
+    try {
+      await SecureStore.deleteItemAsync("edutrack_token");
+      setUser(null);
+      setSelectedClass(null);
+      setPassword("");
+      setPage("welcome");
+    } catch {
+      Alert.alert(t("auth.logoutFailureTitle"), t("auth.logoutFailure"));
+    }
+  }
+
+  function goBackFromStudentPage() {
+    qrRequest.current?.abort();
+    setQrResult(null);
+    pdfScope.current?.controller.abort();
+    setSelectedClass(null);
+    setClassList(null);
+    setMaterialList(null);
+    setPage(page === "learningMaterials" ? "myClasses" : "dashboard");
+  }
+
+  function openStudentPage(nextPage) {
+    if (role !== "student" || user?.role !== "student") return;
+    setSelectedClass(null);
+    setClassList(null);
+    setPage(nextPage);
+  }
+
+  function selectStudentClass(classItem) {
+    if (page !== "myClasses" || role !== "student" || user?.role !== "student")
+      return;
+    if (!isValidClassList([classItem])) return;
+    setMaterialList(null);
+    setSelectedClass(classItem);
+    setPage("learningMaterials");
+  }
+
   const info = ROLES[role];
+  const currentQr = qrResult?.studentId === studentId && qrResult?.session === sessionCheck.current &&
+    qrResult?.attempt === qrAttempt ? qrResult : null;
+  const classResult =
+    classList &&
+    classList.studentId === studentId &&
+    classList.session === sessionCheck.current &&
+    classList.attempt === classAttempt
+      ? classList.result
+      : null;
+  const materialResult =
+    materialList &&
+    materialList.classId === materialClassId &&
+    materialList.studentId === studentId &&
+    materialList.session === sessionCheck.current &&
+    materialList.attempt === materialAttempt
+      ? materialList.result
+      : null;
+  const showLearningMaterials =
+    page === "learningMaterials" &&
+    role === "student" &&
+    user?.role === "student";
+
+  const listedMaterials = materialResult?.materials;
+  useEffect(() => {
+    if (!studentId || !materialClassId || !listedMaterials) return;
+
+    const scope = {
+      controller: new AbortController(),
+      session: sessionCheck.current,
+      materials: listedMaterials,
+      pending: new Set(),
+    };
+    pdfScope.current = scope;
+    Promise.resolve().then(() => {
+      if (!scope.controller.signal.aborted && scope.session === sessionCheck.current) {
+        const saved = getDownloadedPdfIds(studentId, materialClassId, listedMaterials);
+        setPdfState((previous) => ({ scope, saved,
+          feedback: previous?.scope === scope ? previous.feedback : {},
+        }));
+      }
+    });
+
+    return () => {
+      scope.controller.abort();
+      if (pdfScope.current === scope) pdfScope.current = null;
+    };
+  }, [studentId, materialClassId, listedMaterials]);
+
+  function isCurrentPdfScope(scope) {
+    return scope && pdfScope.current === scope && !scope.controller.signal.aborted &&
+      scope.session === sessionCheck.current;
+  }
+
+  async function runPdfAction(material, open) {
+    const scope = pdfScope.current;
+    if (!isCurrentPdfScope(scope) || scope.materials !== listedMaterials ||
+        !listedMaterials.includes(material) || !isPdfMaterial(material) ||
+        scope.pending.has(material.id)) return;
+
+    const update = (key, refresh = false) => {
+      if (!isCurrentPdfScope(scope)) return;
+      const saved = refresh ? getDownloadedPdfIds(studentId, materialClassId, listedMaterials) : null;
+      setPdfState((previous) => {
+        const current = previous?.scope === scope ? previous : { scope, saved: [], feedback: {} };
+        return { ...current, saved: saved ?? current.saved, feedback: { ...current.feedback, [material.id]: key } };
+      });
+    };
+    scope.pending.add(material.id);
+    try {
+      if (open) {
+        await viewSavedPdf({ studentId, classId: materialClassId, material });
+        update(null);
+      } else {
+        update("materials.downloading");
+        await downloadStudentPdf({
+          apiUrl: API_URL,
+          studentId,
+          classId: materialClassId,
+          material,
+          readToken: () => SecureStore.getItemAsync("edutrack_token"),
+          signal: scope.controller.signal,
+        });
+        update("materials.pdfSaved", true);
+      }
+    } catch {
+      update(open ? "materials.pdfUnavailable" : "materials.downloadFailed", true);
+    } finally {
+      scope.pending.delete(material.id);
+    }
+  }
+
+  const visiblePdfState = pdfState?.scope.materials === listedMaterials && isCurrentPdfScope(pdfState?.scope)
+    ? pdfState : null;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -307,270 +623,425 @@ export default function App() {
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-        >
-          {page === "checkingSession" && (
-            <View>
-              <ActivityIndicator color={TEAL} />
-              <Text style={styles.muted}>Checking your saved session...</Text>
-            </View>
-          )}
-
-          {page === "sessionError" && (
-            <View>
-              <Text style={styles.errorText}>{sessionError}</Text>
-              <Button title="Retry session check" onPress={restoreSession} />
-              <Button
-                title="Continue to Welcome"
-                onPress={() => {
-                  sessionCheck.current += 1;
-                  setPage("welcome");
-                }}
+        {showLearningMaterials ? (
+          <View style={styles.materialsScreen}>
+              <LearningMaterialsScreen
+                key={selectedClass?.id || "unselected"}
+                selectedClass={selectedClass}
+                {...(materialResult || {
+                  status: materialClassId ? "loading" : "idle",
+                })}
+                onRetry={() => setMaterialAttempt(materialAttempt + 1)}
+                onBack={goBackFromStudentPage}
+                downloadedMaterialIds={visiblePdfState?.saved}
+                pdfFeedback={visiblePdfState?.feedback}
+                onDownload={listedMaterials ? (material) => runPdfAction(material, false) : undefined}
+                onView={listedMaterials ? (material) => runPdfAction(material, true) : undefined}
               />
-            </View>
-          )}
-
-          {page === "welcome" && (
-            <View>
-              <Text style={styles.tag}>EDUTRACK · LEARN. PRACTISE. GROW.</Text>
-
-              <Text style={styles.title}>Learn with confidence</Text>
-
-              <View style={styles.art}>
-                <Text style={{ fontSize: 92 }}>📖</Text>
-                <Text style={styles.artCheck}>✓</Text>
+          </View>
+        ) : (
+          <ScrollView
+            contentContainerStyle={styles.scroll}
+            keyboardShouldPersistTaps="handled"
+          >
+            {page === "checkingSession" && (
+              <View>
+                <ActivityIndicator color={TEAL} />
+                <LocalizedText style={styles.muted}>
+                  {t("auth.checkingSession")}
+                </LocalizedText>
               </View>
+            )}
 
-              <Text style={styles.bigTitle}>
-                A little practice.{"\n"}A clearer path ahead.
-              </Text>
-
-              <Text style={styles.muted}>
-                Quizzes, class notes and meaningful progress — together in
-                EduTrack.
-              </Text>
-
-              <Button title="Get started" onPress={() => setPage("roles")} />
-
-              <Text style={styles.small}>
-                Built for students, educators and families.
-              </Text>
-            </View>
-          )}
-
-          {page === "roles" && (
-            <View>
-              <Text style={styles.back} onPress={() => setPage("welcome")}>
-                ‹ WELCOME
-              </Text>
-
-              <Text style={styles.title}>Your learning space</Text>
-              <Text style={styles.muted}>Choose how you use EduTrack.</Text>
-
-              <View style={styles.studentCard}>
-                <Text style={styles.whiteSmall}>FOR LEARNERS</Text>
-
-                <Text style={styles.studentTitle}>
-                  Make progress, every day.
-                </Text>
-
-                <Text style={styles.whiteSmall}>
-                  Take quizzes, revisit feedback and build confidence.
-                </Text>
-
+            {page === "sessionError" && (
+              <View>
+                <LanguageSwitcher />
+                <LocalizedText style={styles.errorText}>
+                  {sessionError ? t(sessionError) : ""}
+                </LocalizedText>
                 <Button
-                  title="I'm a student"
-                  light
-                  onPress={() => chooseRole("student")}
+                  title={t("auth.retrySession")}
+                  onPress={restoreSession}
+                />
+                <Button
+                  title={t("auth.continueToWelcome")}
+                  onPress={() => {
+                    sessionCheck.current += 1;
+                    setPage("welcome");
+                  }}
                 />
               </View>
+            )}
 
-              <TouchableOpacity
-                style={styles.roleCard}
-                onPress={() => chooseRole("teacher")}
-              >
-                <Text style={styles.cardTitle}>Teacher / Lecturer</Text>
-                <Text style={styles.muted}>
-                  Teach, assess and support your classes.
-                </Text>
-                <Text style={styles.link}>Continue as educator ›</Text>
-              </TouchableOpacity>
+            {page === "welcome" && (
+              <View>
+                <LanguageSwitcher />
+                <LocalizedText style={styles.tag}>
+                  {t("welcome.tagline")}
+                </LocalizedText>
 
-              <TouchableOpacity
-                style={styles.roleCard}
-                onPress={() => chooseRole("parent")}
-              >
-                <Text style={styles.cardTitle}>Parent / Guardian</Text>
-                <Text style={styles.muted}>
-                  Follow your linked child's learning.
-                </Text>
-                <Text style={styles.link}>Continue as parent ›</Text>
-              </TouchableOpacity>
+                <LocalizedText style={styles.title}>
+                  {t("welcome.heading")}
+                </LocalizedText>
 
-              <Text style={styles.link} onPress={() => chooseRole("admin")}>
-                Administrator access
-              </Text>
-            </View>
-          )}
-
-          {page === "login" && (
-            <View>
-              <Text
-                style={styles.back}
-                onPress={() => {
-                  setError("");
-                  setPage("roles");
-                }}
-              >
-                ‹ SECURE ACCESS
-              </Text>
-
-              <Text style={styles.title}>{info.title}</Text>
-              <Text style={styles.link}>{role.toUpperCase()}</Text>
-
-              <Text style={styles.muted}>
-                Welcome back. Continue where you left off.
-              </Text>
-
-              {!!error && (
-                <View style={styles.errorBox}>
-                  <Text style={styles.errorTitle}>Sign-in unsuccessful</Text>
-                  <Text style={styles.errorText}>{error}</Text>
+                <View style={styles.art}>
+                  <Text style={{ fontSize: 92 }}>📖</Text>
+                  <Text style={styles.artCheck}>✓</Text>
                 </View>
+
+                <LocalizedText style={styles.bigTitle}>
+                  {t("welcome.description")}
+                </LocalizedText>
+
+                <LocalizedText style={styles.muted}>
+                  {t("welcome.supportingText")}
+                </LocalizedText>
+
+                <Button
+                  title={t("welcome.getStarted")}
+                  onPress={() => setPage("roles")}
+                />
+
+                <LocalizedText style={styles.small}>
+                  {t("welcome.audience")}
+                </LocalizedText>
+              </View>
+            )}
+
+            {page === "roles" && (
+              <View>
+                <LocalizedText
+                  style={styles.back}
+                  onPress={() => setPage("welcome")}
+                >
+                  ‹ {t("welcome.back")}
+                </LocalizedText>
+
+                <LocalizedText style={styles.title}>
+                  {t("roles.heading")}
+                </LocalizedText>
+                <LocalizedText style={styles.muted}>
+                  {t("roles.description")}
+                </LocalizedText>
+
+                <View style={styles.studentCard}>
+                  <LocalizedText style={styles.whiteSmall}>
+                    {t("roles.forLearners")}
+                  </LocalizedText>
+
+                  <LocalizedText style={styles.studentTitle}>
+                    {t("roles.progress")}
+                  </LocalizedText>
+
+                  <LocalizedText style={styles.whiteSmall}>
+                    {t("roles.studentDescription")}
+                  </LocalizedText>
+
+                  <Button
+                    title={t("roles.chooseStudent")}
+                    light
+                    onPress={() => chooseRole("student")}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={styles.roleCard}
+                  onPress={() => chooseRole("teacher")}
+                >
+                  <LocalizedText style={styles.cardTitle}>
+                    {t("roles.teacher")}
+                  </LocalizedText>
+                  <LocalizedText style={styles.muted}>
+                    {t("roles.teacherDescription")}
+                  </LocalizedText>
+                  <LocalizedText style={styles.link}>
+                    {t("roles.continueTeacher")}
+                  </LocalizedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.roleCard}
+                  onPress={() => chooseRole("parent")}
+                >
+                  <LocalizedText style={styles.cardTitle}>
+                    {t("roles.parent")}
+                  </LocalizedText>
+                  <LocalizedText style={styles.muted}>
+                    {t("roles.parentDescription")}
+                  </LocalizedText>
+                  <LocalizedText style={styles.link}>
+                    {t("roles.continueParent")}
+                  </LocalizedText>
+                </TouchableOpacity>
+
+                <LocalizedText
+                  style={styles.link}
+                  onPress={() => chooseRole("admin")}
+                >
+                  {t("roles.adminAccess")}
+                </LocalizedText>
+              </View>
+            )}
+
+            {page === "login" && (
+              <View>
+                <LanguageSwitcher />
+                <LocalizedText
+                  style={styles.back}
+                  onPress={() => {
+                    setError("");
+                    setPage("roles");
+                  }}
+                >
+                  ‹ {t("login.secureAccess")}
+                </LocalizedText>
+
+                <LocalizedText style={styles.title}>
+                  {t(info.title)}
+                </LocalizedText>
+                <LocalizedText style={styles.link}>
+                  {t(`roles.${role}`)}
+                </LocalizedText>
+
+                <LocalizedText style={styles.muted}>
+                  {t("login.welcomeBack")}
+                </LocalizedText>
+
+                {!!error && (
+                  <View style={styles.errorBox}>
+                    <LocalizedText style={styles.errorTitle}>
+                      {t("login.unsuccessful")}
+                    </LocalizedText>
+                    {error.key ? (
+                      <LocalizedText style={styles.errorText}>
+                        {t(error.key)}
+                      </LocalizedText>
+                    ) : (
+                      <Text style={styles.errorText}>{error.message}</Text>
+                    )}
+                  </View>
+                )}
+
+                <LocalizedText style={styles.fieldLabel}>
+                  {t(info.label)}
+                </LocalizedText>
+                <LocalizedTextInput
+                  style={styles.input}
+                  placeholder={info.hint}
+                  value={identifier}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType={
+                    role === "student" ? "default" : "email-address"
+                  }
+                  onChangeText={setIdentifier}
+                />
+
+                <LocalizedText style={styles.fieldLabel}>
+                  {t("login.password")}
+                </LocalizedText>
+                <LocalizedTextInput
+                  style={styles.input}
+                  placeholder={t("login.passwordPlaceholder")}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!visible}
+                  autoCapitalize="none"
+                />
+
+                <LocalizedText style={styles.small}>
+                  {t("login.passwordHint")}
+                </LocalizedText>
+
+                <LocalizedText
+                  style={styles.link}
+                  onPress={() => setVisible(!visible)}
+                >
+                  {t(visible ? "login.hidePassword" : "login.showPassword")}
+                </LocalizedText>
+
+                <LocalizedText
+                  style={styles.link}
+                  onPress={() =>
+                    Alert.alert(
+                      t("login.comingSoon"),
+                      t("login.passwordRecoveryUnavailable"),
+                    )
+                  }
+                >
+                  {t("login.forgotPassword")}
+                </LocalizedText>
+
+                <View style={{ marginTop: 14 }}>
+                  {loading ? (
+                    <View accessibilityLiveRegion="polite">
+                      <ActivityIndicator
+                        color={TEAL}
+                        accessibilityLabel={t("common.loading")}
+                      />
+                      <LocalizedText style={styles.muted}>
+                        {t("common.loading")}
+                      </LocalizedText>
+                    </View>
+                  ) : (
+                    <Button title={t("login.signIn")} onPress={signIn} />
+                  )}
+                </View>
+
+                <LocalizedText
+                  style={styles.link}
+                  onPress={() =>
+                    Alert.alert(
+                      t("login.comingSoon"),
+                      t("login.activationUnavailable"),
+                    )
+                  }
+                >
+                  {t(info.help)}
+                </LocalizedText>
+              </View>
+            )}
+
+            {page === "dashboard" &&
+              user &&
+              user.role === role &&
+              role === "student" && (
+                <StudentDashboard
+                  student={user}
+                  onLogout={logOut}
+                  onMyClasses={() => openStudentPage("myClasses")}
+                  onMyQRCard={() => openStudentPage("studentQRCard")}
+                  onLearningMaterials={() =>
+                    openStudentPage("learningMaterials")
+                  }
+                />
               )}
 
-              <Text style={styles.fieldLabel}>{info.label}</Text>
-              <TextInput
-                style={styles.input}
-                placeholder={info.hint}
-                value={identifier}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType={role === "student" ? "default" : "email-address"}
-                onChangeText={setIdentifier}
-              />
+            {page === "myClasses" &&
+              user &&
+              user.role === role &&
+              role === "student" && (
+                <MyClassesScreen
+                  {...(classResult || { status: "loading" })}
+                  onBack={goBackFromStudentPage}
+                  onRetry={() => setClassAttempt(classAttempt + 1)}
+                  onSelectClass={selectStudentClass}
+                />
+              )}
 
-              <Text style={styles.fieldLabel}>Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your password"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!visible}
-                autoCapitalize="none"
-              />
+            {page === "studentQRCard" &&
+              user &&
+              user.role === role &&
+              role === "student" && (
+                <StudentQRCardScreen
+                  {...(currentQr?.result || { status: "loading" })}
+                  onBack={goBackFromStudentPage}
+                  onRetry={() => setQrAttempt(qrAttempt + 1)}
+                  onImageError={() => setQrResult((previous) => currentQr && previous === currentQr
+                    ? { ...previous, result: { status: "error", errorKey: "student.qrInvalid" } }
+                    : previous)}
+                />
+              )}
 
-              <Text style={styles.small}>At least 8 characters</Text>
+            {page === "dashboard" &&
+              user &&
+              user.role === role &&
+              role === "teacher" && (
+                <View>
+                  <LanguageSwitcher />
+                  <Text style={styles.tag}>EDUTRACK</Text>
 
-              <Text style={styles.link} onPress={() => setVisible(!visible)}>
-                {visible ? "Hide password" : "Show password"}
-              </Text>
+                  <LocalizedText style={styles.bigTitle}>
+                    {t(
+                      user?.role === "teacher"
+                        ? "dashboard.teacher"
+                        : "dashboard.student",
+                    )}
+                  </LocalizedText>
 
-              <Text
-                style={styles.link}
-                onPress={() =>
-                  Alert.alert(
-                    "Coming soon",
-                    "Password recovery needs a backend endpoint.",
-                  )
-                }
-              >
-                Forgot password?
-              </Text>
+                  <LocalizedText style={styles.muted}>
+                    {t("dashboard.welcome", {
+                      name: user?.name || t("dashboard.defaultUser"),
+                    })}
+                  </LocalizedText>
 
-              <View style={{ marginTop: 14 }}>
-                {loading ? (
-                  <ActivityIndicator color={TEAL} />
-                ) : (
-                  <Button title="Sign in" onPress={signIn} />
-                )}
-              </View>
+                  <View style={styles.roleCard}>
+                    <LocalizedText style={styles.cardTitle}>
+                      ✓ {t("dashboard.loginSuccessful")}
+                    </LocalizedText>
+                    <LocalizedText style={styles.muted}>
+                      {t("dashboard.comingSoon")}
+                    </LocalizedText>
+                  </View>
 
-              <Text
-                style={styles.link}
-                onPress={() =>
-                  Alert.alert(
-                    "Coming soon",
-                    "Account activation/registration will be implemented next.",
-                  )
-                }
-              >
-                {info.help}
-              </Text>
-            </View>
-          )}
-
-          {page === "dashboard" && user && user.role === role && (
-            <View>
-              <Text style={styles.tag}>EDUTRACK</Text>
-
-              <Text style={styles.bigTitle}>
-                {user?.role === "teacher"
-                  ? "Teacher dashboard"
-                  : "Student dashboard"}
-              </Text>
-
-              <Text style={styles.muted}>
-                Welcome, {user?.name || "EduTrack user"}!
-              </Text>
-
-              <View style={styles.roleCard}>
-                <Text style={styles.cardTitle}>✓ Login successful</Text>
-                <Text style={styles.muted}>
-                  Your full dashboard will be built next.
-                </Text>
-              </View>
-
-              {role === "teacher" && user.role === "teacher" && (
-                <View style={styles.roleCard}>
-                  <Button
-                    title="Load Teacher Data"
-                    onPress={loadTeacherData}
-                    disabled={teacherLoading}
-                  />
-                  {teacherLoading && <ActivityIndicator color={TEAL} />}
-                  {!!teacherError && (
-                    <Text style={styles.errorText}>{teacherError}</Text>
-                  )}
-                  {teacherData && teacherData.id === user.id && (
-                    <View>
-                      <Text style={styles.cardTitle}>{teacherData.name}</Text>
-                      <Text style={styles.muted}>Role: {teacherData.role}</Text>
-                      <Text style={styles.muted}>Identifier: {teacherData.identifier}</Text>
+                  {role === "teacher" && user.role === "teacher" && (
+                    <View style={styles.roleCard}>
+                      <Button
+                        title={t("dashboard.loadTeacherData")}
+                        onPress={loadTeacherData}
+                        disabled={teacherLoading}
+                      />
+                      {teacherLoading && (
+                        <View accessibilityLiveRegion="polite">
+                          <ActivityIndicator
+                            color={TEAL}
+                            accessibilityLabel={t("common.loading")}
+                          />
+                          <LocalizedText style={styles.muted}>
+                            {t("common.loading")}
+                          </LocalizedText>
+                        </View>
+                      )}
+                      {!!teacherError &&
+                        (teacherError.key ? (
+                          <LocalizedText style={styles.errorText}>
+                            {t(teacherError.key)}
+                          </LocalizedText>
+                        ) : (
+                          <Text style={styles.errorText}>
+                            {teacherError.message}
+                          </Text>
+                        ))}
+                      {teacherData && teacherData.id === user.id && (
+                        <View>
+                          <Text style={styles.cardTitle}>
+                            {teacherData.name}
+                          </Text>
+                          <Text style={styles.muted}>
+                            <LocalizedText>
+                              {t("dashboard.roleLabel")}:{" "}
+                            </LocalizedText>
+                            {teacherData.role}
+                          </Text>
+                          <Text style={styles.muted}>
+                            <LocalizedText>
+                              {t("dashboard.identifierLabel")}:{" "}
+                            </LocalizedText>
+                            {teacherData.identifier}
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   )}
+
+                  <Button title={t("dashboard.logout")} onPress={logOut} />
                 </View>
               )}
-
-              <Button
-                title="Log out"
-                onPress={async () => {
-                  sessionCheck.current += 1;
-                  setTeacherLoading(false);
-                  try {
-                    await SecureStore.deleteItemAsync("edutrack_token");
-                    setUser(null);
-                    setPassword("");
-                    setPage("welcome");
-                  } catch {
-                    Alert.alert(
-                      "Logout failed",
-                      "Could not securely remove your saved session. Please try again.",
-                    );
-                  }
-                }}
-              />
-            </View>
-          )}
-        </ScrollView>
+          </ScrollView>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  materialsScreen: {
+    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight ?? 0 : 0,
+    flex: 1,
+    width: "100%",
+    maxWidth: 460,
+    alignSelf: "center",
+  },
   safe: {
     flex: 1,
     backgroundColor: "#F4F7FB",
