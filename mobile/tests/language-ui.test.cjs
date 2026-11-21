@@ -370,10 +370,9 @@ test("logout failure and Teacher session-read errors translate without losing th
   assert.ok(text(env.render(AppContent)).includes(tr.t("dashboard.teacher")));
 });
 
-test("Student dashboard keeps QR offline and prompts for a class before fetching materials", async () => {
-  const env = environment(), { AppContent, user } = await authenticatedDashboard(env, "student");
+test("Student dashboard prompts for a class before fetching materials", async () => {
+  const env = environment(), { AppContent } = await authenticatedDashboard(env, "student");
   const Classes = env.load("components/MyClassesScreen.js").default;
-  const QR = env.load("components/StudentQRCardScreen.js").default;
   const Materials = env.load("components/LearningMaterialsScreen.js").default;
   const count = env.requests.length;
   env.setResponse({ ok: true, json: async () => ({ count: 0, classes: [] }) });
@@ -388,15 +387,8 @@ test("Student dashboard keeps QR offline and prompts for a class before fetching
   classes = find(env.render(AppContent), Classes);
   assert.match(text(Classes(classes.props)), /No enrolled classes yet/);
   assert.equal(env.hardwareBack(), true); tree = env.render(AppContent);
-  button(tree, "My QR Card").props.onPress(); tree = env.render(AppContent);
-  const qr = find(tree, QR); assert.equal(qr.props.student, user);
-  const qrTree = QR(qr.props);
-  assert.ok(text(qrTree).includes(user.name)); assert.ok(text(qrTree).includes(user.identifier));
-  assert.match(text(qrTree), /QR code not available yet/);
   env.setLocale("si"); tree = env.render(AppContent);
   const tr = env.load("localization/i18n.js").createI18n("si");
-  assert.ok(text(QR(find(tree, QR).props)).includes(tr.t("student.qrUnavailable")));
-  find(tree, QR).props.onBack(); tree = env.render(AppContent);
   button(tree, tr.t("materials.title")).props.onPress(); tree = env.render(AppContent);
   const materials = find(tree, Materials);
   assert.equal(materials.props.selectedClass, null); assert.equal(materials.props.status, "idle");
@@ -408,6 +400,141 @@ test("Student dashboard keeps QR offline and prompts for a class before fetching
   classes.props.onBack(); tree = env.render(AppContent);
   button(tree, tr.t("student.myClasses")).props.onPress(); tree = env.render(AppContent);
   find(tree, Classes).props.onSelectClass(null); assert.ok(find(env.render(AppContent), Classes));
+  env.unmount();
+});
+
+const qrAccount = "1".repeat(24), nextQrAccount = "2".repeat(24);
+const qrToken = "test.header.signature";
+const pngFixture = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABUAAAAVCAYAAACpF6WWAAAANUlEQVR4AbXBAQEAMAiAME7/zt4Qsr1ZHJOABCQgAQlIQAISkIAEJCABCUhAAhKQgAQkIIEPWTAEJs7/MYcAAAAASUVORK5CYII=";
+function qrFixture(accountId = qrAccount, name = "QR Student") {
+  return {
+    student: { id: "3".repeat(24), userId: accountId, name, registrationNumber: "EDU-TEST", email: "student@example.test" },
+    payload: "EDUTRACK:EDU-TEST:0123456789abcdef",
+    qrImage: pngFixture,
+  };
+}
+
+test("Student QR adapter validates the account, protected request and bounded PNG response", async () => {
+  const env = environment(), { fetchStudentQR } = env.load("api/studentQR.js");
+  const signal = new AbortController().signal;
+  const options = { apiUrl: "http://test.invalid/", accountId: qrAccount, readToken: async () => qrToken, signal };
+  const payload = qrFixture();
+  env.setResponse({ ok: true, json: async () => payload });
+  const result = await fetchStudentQR(options);
+  assert.equal(result.status, "success");
+  assert.equal(result.student.name, payload.student.name);
+  assert.equal(result.student.registrationNumber, "EDU-TEST");
+  assert.equal(result.student.email, undefined);
+  assert.equal(result.payload, undefined);
+  assert.equal(result.qrImage, pngFixture);
+  assert.equal(env.requests[0].url, "http://test.invalid/api/qr/me");
+  assert.equal(env.requests[0].options.method, "GET");
+  assert.equal(env.requests[0].options.headers.Authorization, `Bearer ${qrToken}`);
+  assert.equal(env.requests[0].options.signal, signal);
+
+  const oversized = Buffer.from(pngFixture.split(",")[1], "base64");
+  oversized.writeUInt32BE(2048, 16);
+  oversized.writeUInt32BE(2048, 20);
+  for (const variant of [null, qrFixture(nextQrAccount), { ...payload, student: { ...payload.student, userId: payload.student.id } },
+    { ...payload, student: { ...payload.student, registrationNumber: "" } }, { ...payload, payload: "unsigned" },
+    ...["https://test.invalid/qr.png", "data:image/jpeg;base64,AAAA", pngFixture.slice(0, -20),
+      `data:image/png;base64,${"A".repeat(128 * 1024)}`, `data:image/png;base64,${oversized.toString("base64")}`]
+      .map((qrImage) => ({ ...payload, qrImage }))]) {
+    env.setResponse({ ok: true, json: async () => variant });
+    assert.equal((await fetchStudentQR(options)).errorKey, "student.qrInvalid");
+  }
+  env.setResponse({ ok: true, json: async () => { throw new SyntaxError(); } });
+  assert.equal((await fetchStudentQR(options)).errorKey, "student.qrInvalid");
+  for (const [status, errorKey] of [[401, "auth.sessionExpired"], [403, "student.qrAccessDenied"],
+    [404, "student.qrProfileNotFound"], [500, "student.qrUnavailable"]]) {
+    env.setResponse({ ok: false, status });
+    assert.equal((await fetchStudentQR(options)).errorKey, errorKey);
+  }
+  env.setResponse(() => { throw Error("offline"); });
+  assert.equal((await fetchStudentQR(options)).errorKey, "student.connectionError");
+  const count = env.requests.length;
+  assert.equal((await fetchStudentQR({ ...options, readToken: async () => null })).errorKey, "auth.noSavedSession");
+  assert.equal((await fetchStudentQR({ ...options, readToken: async () => "malformed" })).errorKey, "auth.sessionExpired");
+  assert.equal((await fetchStudentQR({ ...options, readToken: async () => { throw Error(); } })).errorKey, "auth.sessionReadFailure");
+  const controller = new AbortController();
+  controller.abort();
+  assert.equal((await fetchStudentQR({ ...options, signal: controller.signal })).status, "cancelled");
+  assert.equal(env.requests.length, count);
+});
+
+test("Student QR renders localized loading, Retry, verified identity and image errors", async () => {
+  const env = environment(), { AppContent } = await authenticatedDashboard(env, "student", qrAccount);
+  const QR = env.load("components/StudentQRCardScreen.js").default;
+  const screen = () => all(env.render(AppContent)).find((node) => node.type === QR).props;
+  env.setToken(qrToken);
+  env.setResponse({ ok: false, status: 404 });
+  button(env.render(AppContent), "My QR Card").props.onPress();
+  assert.match(text(QR(screen())), /Loading QR Card/);
+  await tick();
+  assert.match(text(QR(screen())), /Student profile not found/);
+  const data = qrFixture();
+  env.setResponse({ ok: true, json: async () => data });
+  button(QR(screen()), "Retry").props.onPress();
+  assert.equal(screen().status, "loading");
+  await tick();
+  const rendered = QR(screen());
+  assert.match(text(rendered), /QR Student.*EDU-TEST/);
+  assert.doesNotMatch(text(rendered), /0123456789abcdef/);
+  const image = all(rendered).find((node) => node.type === "Image");
+  assert.equal(image.props.source.uri, pngFixture);
+  assert.equal(image.props.resizeMode, "contain");
+  env.setLocale("si");
+  const sinhala = env.load("localization/i18n.js").createI18n("si");
+  assert.ok(text(QR(screen())).includes(sinhala.t("student.registrationLabel")));
+  image.props.onError();
+  assert.ok(text(QR(screen())).includes(sinhala.t("student.qrInvalid")));
+  assert.equal(env.hardwareBack(), true);
+  button(env.render(AppContent), sinhala.t("student.myQRCard"));
+  env.unmount();
+});
+
+test("Back cancels pending QR and logout prevents late results from crossing Student sessions", async () => {
+  const env = environment(), { AppContent } = await authenticatedDashboard(env, "student", qrAccount);
+  const QR = env.load("components/StudentQRCardScreen.js").default;
+  const open = () => {
+    button(env.render(AppContent), "My QR Card").props.onPress();
+    const props = all(env.render(AppContent)).find((node) => node.type === QR).props;
+    assert.equal(props.status, "loading");
+    return props;
+  };
+  const dashboard = env.render(AppContent);
+  env.setToken(qrToken);
+  let resolvePending;
+  const pend = () => env.setResponse(() => new Promise((resolve) => { resolvePending = resolve; }));
+  pend(); open(); await tick();
+  const first = env.requests.at(-1).options.signal;
+  assert.equal(env.hardwareBack(), true);
+  assert.equal(first.aborted, true);
+  resolvePending({ ok: true, json: async () => qrFixture() });
+  await tick();
+  pend(); open(); await tick();
+  const second = env.requests.at(-1).options.signal;
+  const stale = resolvePending;
+  await button(dashboard, "Log out").props.onPress();
+  assert.equal(second.aborted, true);
+
+  button(env.render(AppContent), "Get started").props.onPress();
+  button(env.render(AppContent), "I'm a student").props.onPress();
+  const inputs = all(env.render(AppContent)).filter((node) => node.type === "TextInput");
+  inputs[0].props.onChangeText("NEXT-STUDENT");
+  inputs[1].props.onChangeText("test-password");
+  const nextToken = "next.header.signature";
+  env.setResponse({ ok: true, json: async () => ({ token: nextToken, user: {
+    id: nextQrAccount, role: "student", name: "Next account", identifier: "NEXT-STUDENT",
+  } }) });
+  await button(env.render(AppContent), "Sign in").props.onPress();
+  env.setResponse({ ok: true, json: async () => qrFixture(nextQrAccount, "Next QR Student") });
+  open(); await tick();
+  stale({ ok: true, json: async () => qrFixture() });
+  await tick();
+  const props = all(env.render(AppContent)).find((node) => node.type === QR).props;
+  assert.equal(props.student.name, "Next QR Student");
+  assert.equal(env.requests.at(-1).options.headers.Authorization, `Bearer ${nextToken}`);
   env.unmount();
 });
 

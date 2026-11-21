@@ -12,6 +12,7 @@ import MyClassesScreen from "./components/MyClassesScreen";
 import { fetchStudentClasses, isValidClassList } from "./api/studentClasses";
 import { fetchStudentMaterials } from "./api/studentMaterials";
 import StudentQRCardScreen from "./components/StudentQRCardScreen";
+import { fetchStudentQR } from "./api/studentQR";
 import LearningMaterialsScreen from "./components/LearningMaterialsScreen";
 import {
   downloadStudentPdf,
@@ -115,10 +116,43 @@ function AppContent() {
   const [teacherError, setTeacherError] = useState("");
   const [sessionError, setSessionError] = useState("");
   const sessionCheck = useRef(0);
+  const qrRequest = useRef(null);
+  const [qrResult, setQrResult] = useState(null);
+  const [qrAttempt, setQrAttempt] = useState(0);
   const studentId =
     role === "student" && user?.role === "student" ? user.id : null;
   const materialClassId =
     page === "learningMaterials" ? selectedClass?.id : null;
+
+  useEffect(() => {
+    if (page !== "studentQRCard" || !studentId) return;
+
+    const session = sessionCheck.current;
+    const controller = new AbortController();
+    qrRequest.current = controller;
+    const isCurrent = () => !controller.signal.aborted && session === sessionCheck.current;
+    const publish = (result) => setQrResult({ studentId, session, attempt: qrAttempt, result });
+    const timeout = setTimeout(() => {
+      if (isCurrent()) publish({ status: "error", errorKey: "student.connectionError" });
+      controller.abort();
+    }, 10000);
+
+    fetchStudentQR({
+      apiUrl: API_URL,
+      accountId: studentId,
+      readToken: () => SecureStore.getItemAsync("edutrack_token"),
+      signal: controller.signal,
+    }).then((result) => {
+      clearTimeout(timeout);
+      if (isCurrent()) publish(result);
+    });
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+      if (qrRequest.current === controller) qrRequest.current = null;
+    };
+  }, [page, studentId, qrAttempt]);
 
   useEffect(() => {
     if (page !== "myClasses" || !studentId) return;
@@ -444,6 +478,8 @@ function AppContent() {
 
   async function logOut() {
     sessionCheck.current += 1;
+    qrRequest.current?.abort();
+    setQrResult(null);
     pdfScope.current?.controller.abort();
     setClassList(null);
     setTeacherLoading(false);
@@ -459,6 +495,8 @@ function AppContent() {
   }
 
   function goBackFromStudentPage() {
+    qrRequest.current?.abort();
+    setQrResult(null);
     pdfScope.current?.controller.abort();
     setSelectedClass(null);
     setClassList(null);
@@ -483,6 +521,8 @@ function AppContent() {
   }
 
   const info = ROLES[role];
+  const currentQr = qrResult?.studentId === studentId && qrResult?.session === sessionCheck.current &&
+    qrResult?.attempt === qrAttempt ? qrResult : null;
   const classResult =
     classList &&
     classList.studentId === studentId &&
@@ -894,8 +934,12 @@ function AppContent() {
               user.role === role &&
               role === "student" && (
                 <StudentQRCardScreen
-                  student={user}
+                  {...(currentQr?.result || { status: "loading" })}
                   onBack={goBackFromStudentPage}
+                  onRetry={() => setQrAttempt(qrAttempt + 1)}
+                  onImageError={() => setQrResult((previous) => currentQr && previous === currentQr
+                    ? { ...previous, result: { status: "error", errorKey: "student.qrInvalid" } }
+                    : previous)}
                 />
               )}
 

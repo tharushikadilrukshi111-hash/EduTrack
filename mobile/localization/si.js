@@ -82,8 +82,10 @@ export default {
     teacherName: "ගුරුවරයා: %{name}",
     cardDescription: "ඔබේ EduTrack ශිෂ්‍ය හැඳුනුම් කාඩ්පත.", cardType: "ශිෂ්‍ය හැඳුනුම",
     nameLabel: "ශිෂ්‍ය නම", registrationLabel: "ලියාපදිංචි අංකය",
-    nameUnavailable: "නම ලබා ගත නොහැක", identifierUnavailable: "ලියාපදිංචි අංකය ලබා ගත නොහැක",
-    qrUnavailable: "QR කේතය තවම ලබා ගත නොහැක", qrHint: "මෙම පහසුකම ලැබුණු පසු ඔබේ QR කේතය මෙහි දිස් වනු ඇත.",
+    qrLoading: "QR කාඩ්පත ලබා ගනිමින්…", qrError: "QR කාඩ්පත ලබා ගැනීමට නොහැකි විය",
+    qrUnavailable: "QR කාඩ්පත ලබා ගත නොහැක. කරුණාකර නැවත උත්සාහ කරන්න.", qrImageLabel: "ශිෂ්‍ය හැඳුනුම් QR කේතය",
+    qrAccessDenied: "මෙම QR කාඩ්පත බැලීමට ඔබට අවසර නැත.",
+    qrProfileNotFound: "ශිෂ්‍ය පැතිකඩ සොයාගත නොහැකි විය.", qrInvalid: "සේවාදායකයෙන් ලැබුණු QR කාඩ්පත පෙන්වීමට නොහැකි විය.",
   },
   materials: {
     title: "ඉගෙනුම් ද්‍රව්‍ය", search: "ඉගෙනුම් ද්‍රව්‍ය සොයන්න", searchHint: "සටහන්, PDF සහ මාතෘකා සොයන්න",
