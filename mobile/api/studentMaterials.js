@@ -27,6 +27,7 @@ function mapMaterials(data, classId) {
       title,
       description,
       fileType,
+      size,
       fileSizeLabel: formatSize(size),
       addedDateLabel: created?.toISOString().slice(0, 10),
     });

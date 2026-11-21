@@ -3,13 +3,22 @@ import * as SecureStore from "expo-secure-store";
 import { LanguageProvider, useLanguage } from "./context/LanguageContext";
 import LanguageSwitcher from "./components/LanguageSwitcher";
 import { SinhalaFontProvider } from "./components/SinhalaTypography";
-import { LocalizedText, LocalizedTextInput } from "./components/LocalizedTypography";
+import {
+  LocalizedText,
+  LocalizedTextInput,
+} from "./components/LocalizedTypography";
 import StudentDashboard from "./components/StudentDashboard";
 import MyClassesScreen from "./components/MyClassesScreen";
 import { fetchStudentClasses, isValidClassList } from "./api/studentClasses";
 import { fetchStudentMaterials } from "./api/studentMaterials";
 import StudentQRCardScreen from "./components/StudentQRCardScreen";
 import LearningMaterialsScreen from "./components/LearningMaterialsScreen";
+import {
+  downloadStudentPdf,
+  getDownloadedPdfIds,
+  isPdfMaterial,
+  viewSavedPdf,
+} from "./api/studentPdfDownloads";
 import {
   ActivityIndicator,
   Alert,
@@ -67,13 +76,21 @@ function Button({ title, onPress, disabled = false, light = false }) {
         disabled && { opacity: 0.6 },
       ]}
     >
-      <LocalizedText style={[styles.buttonText, light && { color: BLUE }]}>{title}</LocalizedText>
+      <LocalizedText style={[styles.buttonText, light && { color: BLUE }]}>
+        {title}
+      </LocalizedText>
     </TouchableOpacity>
   );
 }
 
 export default function App() {
-  return <LanguageProvider><SinhalaFontProvider><AppContent /></SinhalaFontProvider></LanguageProvider>;
+  return (
+    <LanguageProvider>
+      <SinhalaFontProvider>
+        <AppContent />
+      </SinhalaFontProvider>
+    </LanguageProvider>
+  );
 }
 
 function AppContent() {
@@ -87,6 +104,8 @@ function AppContent() {
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState(null);
   const [selectedClass, setSelectedClass] = useState(null);
+  const [pdfState, setPdfState] = useState(null);
+  const pdfScope = useRef(null);
   const [classList, setClassList] = useState(null);
   const [classAttempt, setClassAttempt] = useState(0);
   const [materialList, setMaterialList] = useState(null);
@@ -96,18 +115,23 @@ function AppContent() {
   const [teacherError, setTeacherError] = useState("");
   const [sessionError, setSessionError] = useState("");
   const sessionCheck = useRef(0);
-  const studentId = role === "student" && user?.role === "student" ? user.id : null;
-  const materialClassId = page === "learningMaterials" ? selectedClass?.id : null;
+  const studentId =
+    role === "student" && user?.role === "student" ? user.id : null;
+  const materialClassId =
+    page === "learningMaterials" ? selectedClass?.id : null;
 
   useEffect(() => {
     if (page !== "myClasses" || !studentId) return;
 
     const session = sessionCheck.current;
     const controller = new AbortController();
-    const isCurrent = () => !controller.signal.aborted && sessionCheck.current === session;
-    const publish = (result) => setClassList({ studentId, session, attempt: classAttempt, result });
+    const isCurrent = () =>
+      !controller.signal.aborted && sessionCheck.current === session;
+    const publish = (result) =>
+      setClassList({ studentId, session, attempt: classAttempt, result });
     const timeout = setTimeout(() => {
-      if (isCurrent()) publish({ status: "error", errorKey: "student.connectionError" });
+      if (isCurrent())
+        publish({ status: "error", errorKey: "student.connectionError" });
       controller.abort();
     }, 10000);
 
@@ -131,12 +155,19 @@ function AppContent() {
 
     const session = sessionCheck.current;
     const controller = new AbortController();
-    const isCurrent = () => !controller.signal.aborted && sessionCheck.current === session;
-    const publish = (result) => setMaterialList({
-      classId: materialClassId, studentId, session, attempt: materialAttempt, result,
-    });
+    const isCurrent = () =>
+      !controller.signal.aborted && sessionCheck.current === session;
+    const publish = (result) =>
+      setMaterialList({
+        classId: materialClassId,
+        studentId,
+        session,
+        attempt: materialAttempt,
+        result,
+      });
     const timeout = setTimeout(() => {
-      if (isCurrent()) publish({ status: "error", errorKey: "materials.connectionError" });
+      if (isCurrent())
+        publish({ status: "error", errorKey: "materials.connectionError" });
       controller.abort();
     }, 10000);
 
@@ -161,11 +192,19 @@ function AppContent() {
   }, [user?.id, user?.role]);
 
   useEffect(() => {
-    if (!["myClasses", "studentQRCard", "learningMaterials"].includes(page) || role !== "student" || user?.role !== "student") return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      goBackFromStudentPage();
-      return true;
-    });
+    if (
+      !["myClasses", "studentQRCard", "learningMaterials"].includes(page) ||
+      role !== "student" ||
+      user?.role !== "student"
+    )
+      return;
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        goBackFromStudentPage();
+        return true;
+      },
+    );
     return () => subscription.remove();
   }, [page, role, user?.role]);
 
@@ -216,7 +255,8 @@ function AppContent() {
       if (
         !data.user ||
         !["student", "teacher"].includes(data.user.role) ||
-        typeof data.user.id !== "string" || !data.user.id ||
+        typeof data.user.id !== "string" ||
+        !data.user.id ||
         typeof data.user.name !== "string" ||
         typeof data.user.identifier !== "string"
       ) {
@@ -294,9 +334,11 @@ function AppContent() {
       const data = await response.json();
 
       if (!response.ok || !data.token || !data.user) {
-        setError(typeof data.message === "string" && data.message
-          ? { message: data.message }
-          : { key: "auth.signInFailure" });
+        setError(
+          typeof data.message === "string" && data.message
+            ? { message: data.message }
+            : { key: "auth.signInFailure" },
+        );
       } else if (data.user.role !== role) {
         setError({ key: "auth.roleMismatch" });
       } else {
@@ -377,10 +419,16 @@ function AppContent() {
       const data = await response.json();
       if (!isCurrent()) return;
       if (!response.ok) {
-        setTeacherError(typeof data.message === "string" && data.message
-          ? { message: data.message }
-          : { key: "auth.teacherDataFailure" });
-      } else if (!data.user || data.user.role !== "teacher" || data.user.id !== user.id) {
+        setTeacherError(
+          typeof data.message === "string" && data.message
+            ? { message: data.message }
+            : { key: "auth.teacherDataFailure" },
+        );
+      } else if (
+        !data.user ||
+        data.user.role !== "teacher" ||
+        data.user.id !== user.id
+      ) {
         setTeacherError({ key: "auth.unexpectedTeacherData" });
       } else {
         setTeacherData(data.user);
@@ -396,6 +444,7 @@ function AppContent() {
 
   async function logOut() {
     sessionCheck.current += 1;
+    pdfScope.current?.controller.abort();
     setClassList(null);
     setTeacherLoading(false);
     try {
@@ -410,6 +459,7 @@ function AppContent() {
   }
 
   function goBackFromStudentPage() {
+    pdfScope.current?.controller.abort();
     setSelectedClass(null);
     setClassList(null);
     setMaterialList(null);
@@ -424,7 +474,8 @@ function AppContent() {
   }
 
   function selectStudentClass(classItem) {
-    if (page !== "myClasses" || role !== "student" || user?.role !== "student") return;
+    if (page !== "myClasses" || role !== "student" || user?.role !== "student")
+      return;
     if (!isValidClassList([classItem])) return;
     setMaterialList(null);
     setSelectedClass(classItem);
@@ -432,13 +483,97 @@ function AppContent() {
   }
 
   const info = ROLES[role];
-  const classResult = classList && classList.studentId === studentId &&
-    classList.session === sessionCheck.current && classList.attempt === classAttempt
-    ? classList.result : null;
-  const materialResult = materialList && materialList.classId === materialClassId &&
-    materialList.studentId === studentId && materialList.session === sessionCheck.current &&
-    materialList.attempt === materialAttempt ? materialList.result : null;
-  const showLearningMaterials = page === "learningMaterials" && role === "student" && user?.role === "student";
+  const classResult =
+    classList &&
+    classList.studentId === studentId &&
+    classList.session === sessionCheck.current &&
+    classList.attempt === classAttempt
+      ? classList.result
+      : null;
+  const materialResult =
+    materialList &&
+    materialList.classId === materialClassId &&
+    materialList.studentId === studentId &&
+    materialList.session === sessionCheck.current &&
+    materialList.attempt === materialAttempt
+      ? materialList.result
+      : null;
+  const showLearningMaterials =
+    page === "learningMaterials" &&
+    role === "student" &&
+    user?.role === "student";
+
+  const listedMaterials = materialResult?.materials;
+  useEffect(() => {
+    if (!studentId || !materialClassId || !listedMaterials) return;
+
+    const scope = {
+      controller: new AbortController(),
+      session: sessionCheck.current,
+      materials: listedMaterials,
+      pending: new Set(),
+    };
+    pdfScope.current = scope;
+    Promise.resolve().then(() => {
+      if (!scope.controller.signal.aborted && scope.session === sessionCheck.current) {
+        const saved = getDownloadedPdfIds(studentId, materialClassId, listedMaterials);
+        setPdfState((previous) => ({ scope, saved,
+          feedback: previous?.scope === scope ? previous.feedback : {},
+        }));
+      }
+    });
+
+    return () => {
+      scope.controller.abort();
+      if (pdfScope.current === scope) pdfScope.current = null;
+    };
+  }, [studentId, materialClassId, listedMaterials]);
+
+  function isCurrentPdfScope(scope) {
+    return scope && pdfScope.current === scope && !scope.controller.signal.aborted &&
+      scope.session === sessionCheck.current;
+  }
+
+  async function runPdfAction(material, open) {
+    const scope = pdfScope.current;
+    if (!isCurrentPdfScope(scope) || scope.materials !== listedMaterials ||
+        !listedMaterials.includes(material) || !isPdfMaterial(material) ||
+        scope.pending.has(material.id)) return;
+
+    const update = (key, refresh = false) => {
+      if (!isCurrentPdfScope(scope)) return;
+      const saved = refresh ? getDownloadedPdfIds(studentId, materialClassId, listedMaterials) : null;
+      setPdfState((previous) => {
+        const current = previous?.scope === scope ? previous : { scope, saved: [], feedback: {} };
+        return { ...current, saved: saved ?? current.saved, feedback: { ...current.feedback, [material.id]: key } };
+      });
+    };
+    scope.pending.add(material.id);
+    try {
+      if (open) {
+        await viewSavedPdf({ studentId, classId: materialClassId, material });
+        update(null);
+      } else {
+        update("materials.downloading");
+        await downloadStudentPdf({
+          apiUrl: API_URL,
+          studentId,
+          classId: materialClassId,
+          material,
+          readToken: () => SecureStore.getItemAsync("edutrack_token"),
+          signal: scope.controller.signal,
+        });
+        update("materials.pdfSaved", true);
+      }
+    } catch {
+      update(open ? "materials.pdfUnavailable" : "materials.downloadFailed", true);
+    } finally {
+      scope.pending.delete(material.id);
+    }
+  }
+
+  const visiblePdfState = pdfState?.scope.materials === listedMaterials && isCurrentPdfScope(pdfState?.scope)
+    ? pdfState : null;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -450,291 +585,405 @@ function AppContent() {
       >
         {showLearningMaterials ? (
           <View style={styles.materialsScreen}>
-            <LearningMaterialsScreen
-              key={selectedClass?.id || "unselected"}
-              selectedClass={selectedClass}
-              {...(materialResult || { status: materialClassId ? "loading" : "idle" })}
-              onRetry={() => setMaterialAttempt(materialAttempt + 1)}
-              onBack={goBackFromStudentPage}
-            />
+              <LearningMaterialsScreen
+                key={selectedClass?.id || "unselected"}
+                selectedClass={selectedClass}
+                {...(materialResult || {
+                  status: materialClassId ? "loading" : "idle",
+                })}
+                onRetry={() => setMaterialAttempt(materialAttempt + 1)}
+                onBack={goBackFromStudentPage}
+                downloadedMaterialIds={visiblePdfState?.saved}
+                pdfFeedback={visiblePdfState?.feedback}
+                onDownload={listedMaterials ? (material) => runPdfAction(material, false) : undefined}
+                onView={listedMaterials ? (material) => runPdfAction(material, true) : undefined}
+              />
           </View>
         ) : (
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-        >
-          {page === "checkingSession" && (
-            <View>
-              <ActivityIndicator color={TEAL} />
-              <LocalizedText style={styles.muted}>{t("auth.checkingSession")}</LocalizedText>
-            </View>
-          )}
-
-          {page === "sessionError" && (
-            <View>
-              <LanguageSwitcher />
-              <LocalizedText style={styles.errorText}>{sessionError ? t(sessionError) : ""}</LocalizedText>
-              <Button title={t("auth.retrySession")} onPress={restoreSession} />
-              <Button
-                title={t("auth.continueToWelcome")}
-                onPress={() => {
-                  sessionCheck.current += 1;
-                  setPage("welcome");
-                }}
-              />
-            </View>
-          )}
-
-          {page === "welcome" && (
-            <View>
-              <LanguageSwitcher />
-              <LocalizedText style={styles.tag}>{t("welcome.tagline")}</LocalizedText>
-
-              <LocalizedText style={styles.title}>{t("welcome.heading")}</LocalizedText>
-
-              <View style={styles.art}>
-                <Text style={{ fontSize: 92 }}>📖</Text>
-                <Text style={styles.artCheck}>✓</Text>
+          <ScrollView
+            contentContainerStyle={styles.scroll}
+            keyboardShouldPersistTaps="handled"
+          >
+            {page === "checkingSession" && (
+              <View>
+                <ActivityIndicator color={TEAL} />
+                <LocalizedText style={styles.muted}>
+                  {t("auth.checkingSession")}
+                </LocalizedText>
               </View>
+            )}
 
-              <LocalizedText style={styles.bigTitle}>
-                {t("welcome.description")}
-              </LocalizedText>
+            {page === "sessionError" && (
+              <View>
+                <LanguageSwitcher />
+                <LocalizedText style={styles.errorText}>
+                  {sessionError ? t(sessionError) : ""}
+                </LocalizedText>
+                <Button
+                  title={t("auth.retrySession")}
+                  onPress={restoreSession}
+                />
+                <Button
+                  title={t("auth.continueToWelcome")}
+                  onPress={() => {
+                    sessionCheck.current += 1;
+                    setPage("welcome");
+                  }}
+                />
+              </View>
+            )}
 
-              <LocalizedText style={styles.muted}>
-                {t("welcome.supportingText")}
-              </LocalizedText>
-
-              <Button title={t("welcome.getStarted")} onPress={() => setPage("roles")} />
-
-              <LocalizedText style={styles.small}>
-                {t("welcome.audience")}
-              </LocalizedText>
-            </View>
-          )}
-
-          {page === "roles" && (
-            <View>
-              <LocalizedText style={styles.back} onPress={() => setPage("welcome")}>
-                ‹ {t("welcome.back")}
-              </LocalizedText>
-
-              <LocalizedText style={styles.title}>{t("roles.heading")}</LocalizedText>
-              <LocalizedText style={styles.muted}>{t("roles.description")}</LocalizedText>
-
-              <View style={styles.studentCard}>
-                <LocalizedText style={styles.whiteSmall}>{t("roles.forLearners")}</LocalizedText>
-
-                <LocalizedText style={styles.studentTitle}>
-                  {t("roles.progress")}
+            {page === "welcome" && (
+              <View>
+                <LanguageSwitcher />
+                <LocalizedText style={styles.tag}>
+                  {t("welcome.tagline")}
                 </LocalizedText>
 
-                <LocalizedText style={styles.whiteSmall}>
-                  {t("roles.studentDescription")}
+                <LocalizedText style={styles.title}>
+                  {t("welcome.heading")}
+                </LocalizedText>
+
+                <View style={styles.art}>
+                  <Text style={{ fontSize: 92 }}>📖</Text>
+                  <Text style={styles.artCheck}>✓</Text>
+                </View>
+
+                <LocalizedText style={styles.bigTitle}>
+                  {t("welcome.description")}
+                </LocalizedText>
+
+                <LocalizedText style={styles.muted}>
+                  {t("welcome.supportingText")}
                 </LocalizedText>
 
                 <Button
-                  title={t("roles.chooseStudent")}
-                  light
-                  onPress={() => chooseRole("student")}
+                  title={t("welcome.getStarted")}
+                  onPress={() => setPage("roles")}
                 />
-              </View>
 
-              <TouchableOpacity
-                style={styles.roleCard}
-                onPress={() => chooseRole("teacher")}
-              >
-                <LocalizedText style={styles.cardTitle}>{t("roles.teacher")}</LocalizedText>
-                <LocalizedText style={styles.muted}>
-                  {t("roles.teacherDescription")}
-                </LocalizedText>
-                <LocalizedText style={styles.link}>{t("roles.continueTeacher")}</LocalizedText>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.roleCard}
-                onPress={() => chooseRole("parent")}
-              >
-                <LocalizedText style={styles.cardTitle}>{t("roles.parent")}</LocalizedText>
-                <LocalizedText style={styles.muted}>
-                  {t("roles.parentDescription")}
-                </LocalizedText>
-                <LocalizedText style={styles.link}>{t("roles.continueParent")}</LocalizedText>
-              </TouchableOpacity>
-
-              <LocalizedText style={styles.link} onPress={() => chooseRole("admin")}>
-                {t("roles.adminAccess")}
-              </LocalizedText>
-            </View>
-          )}
-
-          {page === "login" && (
-            <View>
-              <LanguageSwitcher />
-              <LocalizedText
-                style={styles.back}
-                onPress={() => {
-                  setError("");
-                  setPage("roles");
-                }}
-              >
-                ‹ {t("login.secureAccess")}
-              </LocalizedText>
-
-              <LocalizedText style={styles.title}>{t(info.title)}</LocalizedText>
-              <LocalizedText style={styles.link}>{t(`roles.${role}`)}</LocalizedText>
-
-              <LocalizedText style={styles.muted}>
-                {t("login.welcomeBack")}
-              </LocalizedText>
-
-              {!!error && (
-                <View style={styles.errorBox}>
-                  <LocalizedText style={styles.errorTitle}>{t("login.unsuccessful")}</LocalizedText>
-                  {error.key ? <LocalizedText style={styles.errorText}>{t(error.key)}</LocalizedText> : <Text style={styles.errorText}>{error.message}</Text>}
-                </View>
-              )}
-
-              <LocalizedText style={styles.fieldLabel}>{t(info.label)}</LocalizedText>
-              <LocalizedTextInput
-                style={styles.input}
-                placeholder={info.hint}
-                value={identifier}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType={role === "student" ? "default" : "email-address"}
-                onChangeText={setIdentifier}
-              />
-
-              <LocalizedText style={styles.fieldLabel}>{t("login.password")}</LocalizedText>
-              <LocalizedTextInput
-                style={styles.input}
-                placeholder={t("login.passwordPlaceholder")}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!visible}
-                autoCapitalize="none"
-              />
-
-              <LocalizedText style={styles.small}>{t("login.passwordHint")}</LocalizedText>
-
-              <LocalizedText style={styles.link} onPress={() => setVisible(!visible)}>
-                {t(visible ? "login.hidePassword" : "login.showPassword")}
-              </LocalizedText>
-
-              <LocalizedText
-                style={styles.link}
-                onPress={() =>
-                  Alert.alert(
-                    t("login.comingSoon"),
-                    t("login.passwordRecoveryUnavailable"),
-                  )
-                }
-              >
-                {t("login.forgotPassword")}
-              </LocalizedText>
-
-              <View style={{ marginTop: 14 }}>
-                {loading ? (
-                  <View accessibilityLiveRegion="polite">
-                    <ActivityIndicator color={TEAL} accessibilityLabel={t("common.loading")} />
-                    <LocalizedText style={styles.muted}>{t("common.loading")}</LocalizedText>
-                  </View>
-                ) : (
-                  <Button title={t("login.signIn")} onPress={signIn} />
-                )}
-              </View>
-
-              <LocalizedText
-                style={styles.link}
-                onPress={() =>
-                  Alert.alert(
-                    t("login.comingSoon"),
-                    t("login.activationUnavailable"),
-                  )
-                }
-              >
-                {t(info.help)}
-              </LocalizedText>
-            </View>
-          )}
-
-          {page === "dashboard" && user && user.role === role && role === "student" && (
-            <StudentDashboard
-              student={user}
-              onLogout={logOut}
-              onMyClasses={() => openStudentPage("myClasses")}
-              onMyQRCard={() => openStudentPage("studentQRCard")}
-              onLearningMaterials={() => openStudentPage("learningMaterials")}
-            />
-          )}
-
-          {page === "myClasses" && user && user.role === role && role === "student" && (
-            <MyClassesScreen
-              {...(classResult || { status: "loading" })}
-              onBack={goBackFromStudentPage}
-              onRetry={() => setClassAttempt(classAttempt + 1)}
-              onSelectClass={selectStudentClass}
-            />
-          )}
-
-          {page === "studentQRCard" && user && user.role === role && role === "student" && (
-            <StudentQRCardScreen student={user} onBack={goBackFromStudentPage} />
-          )}
-
-          {page === "dashboard" && user && user.role === role && role === "teacher" && (
-            <View>
-              <LanguageSwitcher />
-              <Text style={styles.tag}>EDUTRACK</Text>
-
-              <LocalizedText style={styles.bigTitle}>
-                {t(user?.role === "teacher" ? "dashboard.teacher" : "dashboard.student")}
-              </LocalizedText>
-
-              <LocalizedText style={styles.muted}>
-                {t("dashboard.welcome", { name: user?.name || t("dashboard.defaultUser") })}
-              </LocalizedText>
-
-              <View style={styles.roleCard}>
-                <LocalizedText style={styles.cardTitle}>✓ {t("dashboard.loginSuccessful")}</LocalizedText>
-                <LocalizedText style={styles.muted}>
-                  {t("dashboard.comingSoon")}
+                <LocalizedText style={styles.small}>
+                  {t("welcome.audience")}
                 </LocalizedText>
               </View>
+            )}
 
-              {role === "teacher" && user.role === "teacher" && (
-                <View style={styles.roleCard}>
+            {page === "roles" && (
+              <View>
+                <LocalizedText
+                  style={styles.back}
+                  onPress={() => setPage("welcome")}
+                >
+                  ‹ {t("welcome.back")}
+                </LocalizedText>
+
+                <LocalizedText style={styles.title}>
+                  {t("roles.heading")}
+                </LocalizedText>
+                <LocalizedText style={styles.muted}>
+                  {t("roles.description")}
+                </LocalizedText>
+
+                <View style={styles.studentCard}>
+                  <LocalizedText style={styles.whiteSmall}>
+                    {t("roles.forLearners")}
+                  </LocalizedText>
+
+                  <LocalizedText style={styles.studentTitle}>
+                    {t("roles.progress")}
+                  </LocalizedText>
+
+                  <LocalizedText style={styles.whiteSmall}>
+                    {t("roles.studentDescription")}
+                  </LocalizedText>
+
                   <Button
-                    title={t("dashboard.loadTeacherData")}
-                    onPress={loadTeacherData}
-                    disabled={teacherLoading}
+                    title={t("roles.chooseStudent")}
+                    light
+                    onPress={() => chooseRole("student")}
                   />
-                  {teacherLoading && (
+                </View>
+
+                <TouchableOpacity
+                  style={styles.roleCard}
+                  onPress={() => chooseRole("teacher")}
+                >
+                  <LocalizedText style={styles.cardTitle}>
+                    {t("roles.teacher")}
+                  </LocalizedText>
+                  <LocalizedText style={styles.muted}>
+                    {t("roles.teacherDescription")}
+                  </LocalizedText>
+                  <LocalizedText style={styles.link}>
+                    {t("roles.continueTeacher")}
+                  </LocalizedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.roleCard}
+                  onPress={() => chooseRole("parent")}
+                >
+                  <LocalizedText style={styles.cardTitle}>
+                    {t("roles.parent")}
+                  </LocalizedText>
+                  <LocalizedText style={styles.muted}>
+                    {t("roles.parentDescription")}
+                  </LocalizedText>
+                  <LocalizedText style={styles.link}>
+                    {t("roles.continueParent")}
+                  </LocalizedText>
+                </TouchableOpacity>
+
+                <LocalizedText
+                  style={styles.link}
+                  onPress={() => chooseRole("admin")}
+                >
+                  {t("roles.adminAccess")}
+                </LocalizedText>
+              </View>
+            )}
+
+            {page === "login" && (
+              <View>
+                <LanguageSwitcher />
+                <LocalizedText
+                  style={styles.back}
+                  onPress={() => {
+                    setError("");
+                    setPage("roles");
+                  }}
+                >
+                  ‹ {t("login.secureAccess")}
+                </LocalizedText>
+
+                <LocalizedText style={styles.title}>
+                  {t(info.title)}
+                </LocalizedText>
+                <LocalizedText style={styles.link}>
+                  {t(`roles.${role}`)}
+                </LocalizedText>
+
+                <LocalizedText style={styles.muted}>
+                  {t("login.welcomeBack")}
+                </LocalizedText>
+
+                {!!error && (
+                  <View style={styles.errorBox}>
+                    <LocalizedText style={styles.errorTitle}>
+                      {t("login.unsuccessful")}
+                    </LocalizedText>
+                    {error.key ? (
+                      <LocalizedText style={styles.errorText}>
+                        {t(error.key)}
+                      </LocalizedText>
+                    ) : (
+                      <Text style={styles.errorText}>{error.message}</Text>
+                    )}
+                  </View>
+                )}
+
+                <LocalizedText style={styles.fieldLabel}>
+                  {t(info.label)}
+                </LocalizedText>
+                <LocalizedTextInput
+                  style={styles.input}
+                  placeholder={info.hint}
+                  value={identifier}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType={
+                    role === "student" ? "default" : "email-address"
+                  }
+                  onChangeText={setIdentifier}
+                />
+
+                <LocalizedText style={styles.fieldLabel}>
+                  {t("login.password")}
+                </LocalizedText>
+                <LocalizedTextInput
+                  style={styles.input}
+                  placeholder={t("login.passwordPlaceholder")}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!visible}
+                  autoCapitalize="none"
+                />
+
+                <LocalizedText style={styles.small}>
+                  {t("login.passwordHint")}
+                </LocalizedText>
+
+                <LocalizedText
+                  style={styles.link}
+                  onPress={() => setVisible(!visible)}
+                >
+                  {t(visible ? "login.hidePassword" : "login.showPassword")}
+                </LocalizedText>
+
+                <LocalizedText
+                  style={styles.link}
+                  onPress={() =>
+                    Alert.alert(
+                      t("login.comingSoon"),
+                      t("login.passwordRecoveryUnavailable"),
+                    )
+                  }
+                >
+                  {t("login.forgotPassword")}
+                </LocalizedText>
+
+                <View style={{ marginTop: 14 }}>
+                  {loading ? (
                     <View accessibilityLiveRegion="polite">
-                      <ActivityIndicator color={TEAL} accessibilityLabel={t("common.loading")} />
-                      <LocalizedText style={styles.muted}>{t("common.loading")}</LocalizedText>
+                      <ActivityIndicator
+                        color={TEAL}
+                        accessibilityLabel={t("common.loading")}
+                      />
+                      <LocalizedText style={styles.muted}>
+                        {t("common.loading")}
+                      </LocalizedText>
                     </View>
-                  )}
-                  {!!teacherError && (
-                    teacherError.key ? <LocalizedText style={styles.errorText}>{t(teacherError.key)}</LocalizedText> : <Text style={styles.errorText}>{teacherError.message}</Text>
-                  )}
-                  {teacherData && teacherData.id === user.id && (
-                    <View>
-                      <Text style={styles.cardTitle}>{teacherData.name}</Text>
-                      <Text style={styles.muted}><LocalizedText>{t("dashboard.roleLabel")}: </LocalizedText>{teacherData.role}</Text>
-                      <Text style={styles.muted}><LocalizedText>{t("dashboard.identifierLabel")}: </LocalizedText>{teacherData.identifier}</Text>
-                    </View>
+                  ) : (
+                    <Button title={t("login.signIn")} onPress={signIn} />
                   )}
                 </View>
+
+                <LocalizedText
+                  style={styles.link}
+                  onPress={() =>
+                    Alert.alert(
+                      t("login.comingSoon"),
+                      t("login.activationUnavailable"),
+                    )
+                  }
+                >
+                  {t(info.help)}
+                </LocalizedText>
+              </View>
+            )}
+
+            {page === "dashboard" &&
+              user &&
+              user.role === role &&
+              role === "student" && (
+                <StudentDashboard
+                  student={user}
+                  onLogout={logOut}
+                  onMyClasses={() => openStudentPage("myClasses")}
+                  onMyQRCard={() => openStudentPage("studentQRCard")}
+                  onLearningMaterials={() =>
+                    openStudentPage("learningMaterials")
+                  }
+                />
               )}
 
-              <Button
-                title={t("dashboard.logout")}
-                onPress={logOut}
-              />
-            </View>
-          )}
-        </ScrollView>
+            {page === "myClasses" &&
+              user &&
+              user.role === role &&
+              role === "student" && (
+                <MyClassesScreen
+                  {...(classResult || { status: "loading" })}
+                  onBack={goBackFromStudentPage}
+                  onRetry={() => setClassAttempt(classAttempt + 1)}
+                  onSelectClass={selectStudentClass}
+                />
+              )}
+
+            {page === "studentQRCard" &&
+              user &&
+              user.role === role &&
+              role === "student" && (
+                <StudentQRCardScreen
+                  student={user}
+                  onBack={goBackFromStudentPage}
+                />
+              )}
+
+            {page === "dashboard" &&
+              user &&
+              user.role === role &&
+              role === "teacher" && (
+                <View>
+                  <LanguageSwitcher />
+                  <Text style={styles.tag}>EDUTRACK</Text>
+
+                  <LocalizedText style={styles.bigTitle}>
+                    {t(
+                      user?.role === "teacher"
+                        ? "dashboard.teacher"
+                        : "dashboard.student",
+                    )}
+                  </LocalizedText>
+
+                  <LocalizedText style={styles.muted}>
+                    {t("dashboard.welcome", {
+                      name: user?.name || t("dashboard.defaultUser"),
+                    })}
+                  </LocalizedText>
+
+                  <View style={styles.roleCard}>
+                    <LocalizedText style={styles.cardTitle}>
+                      ✓ {t("dashboard.loginSuccessful")}
+                    </LocalizedText>
+                    <LocalizedText style={styles.muted}>
+                      {t("dashboard.comingSoon")}
+                    </LocalizedText>
+                  </View>
+
+                  {role === "teacher" && user.role === "teacher" && (
+                    <View style={styles.roleCard}>
+                      <Button
+                        title={t("dashboard.loadTeacherData")}
+                        onPress={loadTeacherData}
+                        disabled={teacherLoading}
+                      />
+                      {teacherLoading && (
+                        <View accessibilityLiveRegion="polite">
+                          <ActivityIndicator
+                            color={TEAL}
+                            accessibilityLabel={t("common.loading")}
+                          />
+                          <LocalizedText style={styles.muted}>
+                            {t("common.loading")}
+                          </LocalizedText>
+                        </View>
+                      )}
+                      {!!teacherError &&
+                        (teacherError.key ? (
+                          <LocalizedText style={styles.errorText}>
+                            {t(teacherError.key)}
+                          </LocalizedText>
+                        ) : (
+                          <Text style={styles.errorText}>
+                            {teacherError.message}
+                          </Text>
+                        ))}
+                      {teacherData && teacherData.id === user.id && (
+                        <View>
+                          <Text style={styles.cardTitle}>
+                            {teacherData.name}
+                          </Text>
+                          <Text style={styles.muted}>
+                            <LocalizedText>
+                              {t("dashboard.roleLabel")}:{" "}
+                            </LocalizedText>
+                            {teacherData.role}
+                          </Text>
+                          <Text style={styles.muted}>
+                            <LocalizedText>
+                              {t("dashboard.identifierLabel")}:{" "}
+                            </LocalizedText>
+                            {teacherData.identifier}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
+
+                  <Button title={t("dashboard.logout")} onPress={logOut} />
+                </View>
+              )}
+          </ScrollView>
         )}
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -742,7 +991,13 @@ function AppContent() {
 }
 
 const styles = StyleSheet.create({
-  materialsScreen: { flex: 1, width: "100%", maxWidth: 460, alignSelf: "center" },
+  materialsScreen: {
+    paddingTop: Platform.OS === "android" ? StatusBar.currentHeight ?? 0 : 0,
+    flex: 1,
+    width: "100%",
+    maxWidth: 460,
+    alignSelf: "center",
+  },
   safe: {
     flex: 1,
     backgroundColor: "#F4F7FB",

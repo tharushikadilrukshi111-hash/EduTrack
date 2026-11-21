@@ -10,7 +10,7 @@ const babel = require(resolve("@babel/core"));
 const plugins = ["@babel/plugin-transform-react-jsx", "@babel/plugin-transform-modules-commonjs"].map(resolve);
 const tick = () => new Promise((done) => setImmediate(done));
 
-function environment() {
+function environment(fileSystem) {
   const slots = [], effects = [], requests = [], writes = [], deletes = [], alerts = [];
   let token = null, readError = false, deleteError = false;
   let hardwareBack = null;
@@ -29,7 +29,7 @@ function environment() {
     useState(initial) {
       const i = cursor++;
       if (!(i in slots)) slots[i] = initial;
-      return [slots[i], (v) => { slots[i] = v; }];
+      return [slots[i], (v) => { slots[i] = typeof v === "function" ? v(slots[i]) : v; }];
     },
     useRef(initial) {
       const i = cursor++;
@@ -83,6 +83,7 @@ function environment() {
       require(name) {
         if (name === "react") return React;
         if (name === "react-native") return native;
+        if (name === "expo-file-system" && fileSystem) return fileSystem;
         if (name === "expo-font") return { useFonts: () => [false, null] };
         if (name.endsWith(".ttf")) return name;
         if (name.endsWith("/context/LanguageContext")) return language;
@@ -236,12 +237,12 @@ test("all role selections keep internal codes; Teacher login/logout retain token
   }
 });
 
-async function authenticatedDashboard(env, role) {
+async function authenticatedDashboard(env, role, id = "test-user") {
   const AppContent = await loginScreen(env, role);
   let tree = env.render(AppContent), inputs = all(tree).filter((n) => n.type === "TextInput");
   inputs[0].props.onChangeText(role === "student" ? "ET-TEST" : "teacher@example.test");
   inputs[1].props.onChangeText("test-password");
-  const user = { id: "test-user", role, name: "Untranslated Name", identifier: "ORIGINAL-ID" };
+  const user = { id, role, name: "Untranslated Name", identifier: "ORIGINAL-ID" };
   env.setResponse({ ok: true, json: async () => ({ token: "test-token", user }) });
   tree = env.render(AppContent); await button(tree, "Sign in").props.onPress();
   return { AppContent, user };
@@ -697,4 +698,242 @@ test("combined Student-only controls are absent for Teachers", async () => {
   }
   assert.ok(button(tree, "Load Teacher Data"));
   assert.equal(env.hardwareBack(), undefined);
+});
+
+function mockPdfFiles() {
+  const files = new Map(), transfers = [], previews = [];
+  const pdf = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n");
+  let transfer = async (file) => { files.set(file.uri, pdf); };
+  const uri = (parts) => parts.map((part) => part.uri ?? part).join("/");
+  class Directory {
+    constructor(...parts) { this.uri = uri(parts); }
+    async create() {}
+  }
+  class File {
+    constructor(...parts) { this.uri = uri(parts); }
+    get exists() { return files.has(this.uri); }
+    get size() { return files.get(this.uri)?.length; }
+    open() {
+      const bytes = files.get(this.uri);
+      return { offset: 0, readBytesSync(count) {
+        const result = bytes.subarray(this.offset, this.offset + count);
+        this.offset += result.length;
+        return result;
+      }, close() {} };
+    }
+    async delete() { files.delete(this.uri); }
+    async move(to) {
+      files.set(to.uri, files.get(this.uri));
+      files.delete(this.uri);
+      this.uri = to.uri;
+    }
+    async preview(options) { previews.push({ uri: this.uri, options }); }
+    static async downloadFileAsync(url, file, options) {
+      transfers.push({ url, options });
+      await transfer(file, options);
+      return new File(file.uri);
+    }
+  }
+  return { api: { Directory, File, Paths: { document: "file:///documents" }, FileMode: { ReadOnly: "r" } },
+    files, transfers, previews, pdf, setTransfer: (fn) => { transfer = fn; } };
+}
+
+const pdfStudent = "1".repeat(24), otherPdfStudent = "2".repeat(24);
+const pdfClass = "a".repeat(24), otherPdfClass = "b".repeat(24);
+const pdfId = "c".repeat(24);
+
+test("PDF download uses the bearer header and persists valid files for one Student and class", async () => {
+  const native = mockPdfFiles();
+  const service = environment(native.api).load("api/studentPdfDownloads.js");
+  const material = { id: pdfId, title: "Notes", fileType: "pdf", size: native.pdf.length };
+  const options = { apiUrl: "http://test.invalid/", studentId: pdfStudent, classId: pdfClass,
+    material, readToken: async () => "student-token", signal: new AbortController().signal };
+  await service.downloadStudentPdf(options);
+  assert.equal(native.transfers[0].url, `http://test.invalid/api/materials/${pdfId}/download`);
+  assert.equal(native.transfers[0].options.headers.Authorization, "Bearer student-token");
+  assert.equal(native.transfers[0].options.signal, options.signal);
+  const stored = `file:///documents/edutrack-pdfs/${pdfStudent}/${pdfClass}/${pdfId}.pdf`;
+  assert.deepEqual([...native.files.keys()], [stored]);
+  const reopened = environment(native.api).load("api/studentPdfDownloads.js");
+  assert.equal(reopened.getDownloadedPdfIds(pdfStudent, pdfClass, [material]).join(), pdfId);
+  assert.equal(reopened.getDownloadedPdfIds(otherPdfStudent, pdfClass, [material]).length, 0);
+  assert.equal(reopened.getDownloadedPdfIds(pdfStudent, otherPdfClass, [material]).length, 0);
+  await assert.rejects(reopened.viewSavedPdf({ ...options, studentId: otherPdfStudent }), /not saved/);
+  await reopened.viewSavedPdf(options);
+  assert.equal(native.previews[0].uri, stored);
+  assert.equal(native.previews[0].options.mimeType, "application/pdf");
+  await service.downloadStudentPdf(options);
+  assert.equal(native.transfers.length, 1);
+  native.files.delete(stored);
+  assert.equal(reopened.getDownloadedPdfIds(pdfStudent, pdfClass, [material]).length, 0);
+  await assert.rejects(reopened.viewSavedPdf(options), /not saved/);
+});
+
+test("PDF failures and cancellation leave no incomplete files and duplicate transfers are blocked", async () => {
+  const native = mockPdfFiles();
+  const service = environment(native.api).load("api/studentPdfDownloads.js");
+  const material = { id: pdfId, fileType: "pdf", size: native.pdf.length };
+  const options = { apiUrl: "https://test.invalid", studentId: pdfStudent, classId: pdfClass,
+    material, readToken: async () => "student-token" };
+  for (const token of [null, "", "bad token"]) {
+    await assert.rejects(service.downloadStudentPdf({ ...options, readToken: async () => token }), /session unavailable/);
+  }
+  await assert.rejects(service.downloadStudentPdf({ ...options, material: { ...material, id: "../notes" } }), /Invalid PDF/);
+  assert.equal(native.transfers.length, 0);
+  for (const status of [401, 403, 404, 500]) {
+    native.setTransfer(async () => { throw new Error(`HTTP ${status}`); });
+    await assert.rejects(service.downloadStudentPdf(options), new RegExp(String(status)));
+    assert.equal(native.files.size, 0);
+  }
+  native.setTransfer(async (file) => {
+    native.files.set(file.uri, native.pdf.subarray(0, 12));
+    throw new Error("connection lost");
+  });
+  await assert.rejects(service.downloadStudentPdf(options), /connection lost/);
+  assert.equal(native.files.size, 0);
+  for (const bad of [Buffer.alloc(native.pdf.length, "{}"), native.pdf.subarray(0, -6), Buffer.from("%PDF-1.4\n%%EOF\n")]) {
+    native.setTransfer(async (file) => { native.files.set(file.uri, bad); });
+    await assert.rejects(service.downloadStudentPdf(options), /Invalid PDF received/);
+    assert.equal(native.files.size, 0);
+  }
+  native.setTransfer(async (file) => { native.files.set(file.uri, Buffer.from("%PDF-1.4\npartial")); });
+  await assert.rejects(service.downloadStudentPdf({ ...options, material: { ...material, size: undefined } }), /Invalid PDF received/);
+  const controller = new AbortController();
+  let finish;
+  native.setTransfer((file) => new Promise((resolve) => {
+    finish = () => { native.files.set(file.uri, native.pdf); resolve(); };
+  }));
+  const first = service.downloadStudentPdf({ ...options, signal: controller.signal });
+  await tick();
+  await assert.rejects(service.downloadStudentPdf(options), /already in progress/);
+  controller.abort();
+  finish();
+  await assert.rejects(first, /cancelled/);
+  assert.equal(native.files.size, 0);
+});
+
+test("Materials cancels PDF transfers on Back and prevents late feedback after logout", async () => {
+  const native = mockPdfFiles();
+  const env = environment(native.api), { AppContent } = await authenticatedDashboard(env, "student", pdfStudent);
+  const Classes = env.load("components/MyClassesScreen.js").default;
+  const Materials = env.load("components/LearningMaterialsScreen.js").default;
+  const screen = (Component) => all(env.render(AppContent)).find((node) => node.type === Component)?.props;
+  const classes = [{ id: pdfClass, name: "First class" }, { id: otherPdfClass, name: "Second class" }];
+  env.setResponse((url) => ({ ok: true, json: async () => url.endsWith("/api/classes")
+    ? { count: classes.length, classes }
+    : { count: 1, materials: [{ id: pdfId, title: "Notes", fileType: "pdf", size: native.pdf.length, classId: url.split("=")[1] }] } }));
+  const select = async (id) => {
+    screen(Classes);
+    await tick();
+    const props = screen(Classes);
+    props.onSelectClass(props.classes.find((item) => item.id === id));
+    screen(Materials);
+    await tick();
+    screen(Materials);
+    await tick();
+    return screen(Materials);
+  };
+  let finish;
+  native.setTransfer((file) => new Promise((resolve) => {
+    finish = () => { native.files.set(file.uri, native.pdf); resolve(); };
+  }));
+  button(env.render(AppContent), "My Classes").props.onPress();
+  const firstClass = await select(pdfClass);
+  const oldDownload = firstClass.onDownload(firstClass.materials[0]);
+  await tick();
+  assert.equal(screen(Materials).pdfFeedback[pdfId], "materials.downloading");
+  assert.equal(env.hardwareBack(), true);
+  assert.equal(native.transfers[0].options.signal.aborted, true);
+  const secondClass = await select(otherPdfClass);
+  finish();
+  await oldDownload;
+  assert.equal(screen(Materials).downloadedMaterialIds.length, 0);
+  assert.equal(screen(Materials).pdfFeedback[pdfId], undefined);
+  const laterDownload = secondClass.onDownload(secondClass.materials[0]);
+  await tick();
+  assert.equal(env.hardwareBack(), true);
+  screen(Classes);
+  assert.equal(env.hardwareBack(), true);
+  await button(env.render(AppContent), "Log out").props.onPress();
+  assert.equal(native.transfers[1].options.signal.aborted, true);
+  finish();
+  await laterDownload;
+  assert.equal(native.files.size, 0);
+  assert.equal(screen(Materials), undefined);
+  env.unmount();
+});
+
+test("Materials shows a saved PDF only after transfer success and rechecks it when reopening", async () => {
+  const native = mockPdfFiles();
+  const env = environment(native.api), { AppContent } = await authenticatedDashboard(env, "student", pdfStudent);
+  const Classes = env.load("components/MyClassesScreen.js").default;
+  const Materials = env.load("components/LearningMaterialsScreen.js").default;
+  const screen = (Component) => all(env.render(AppContent)).find((node) => node.type === Component)?.props;
+  env.setResponse((url) => ({ ok: true, json: async () => url.endsWith("/api/classes")
+    ? { count: 1, classes: [{ id: pdfClass, name: "Mathematics" }] }
+    : { count: 1, materials: [{ id: pdfId, title: "Notes", fileType: "pdf", size: native.pdf.length, classId: pdfClass }] } }));
+  const select = async () => {
+    screen(Classes);
+    await tick();
+    const classes = screen(Classes);
+    classes.onSelectClass(classes.classes[0]);
+    screen(Materials);
+    await tick();
+    screen(Materials);
+    await tick();
+    return screen(Materials);
+  };
+  button(env.render(AppContent), "My Classes").props.onPress();
+  let props = await select();
+  native.setTransfer(async () => { throw new Error("connection lost"); });
+  await props.onDownload(props.materials[0]);
+  props = screen(Materials);
+  assert.equal(props.downloadedMaterialIds.length, 0);
+  assert.equal(props.pdfFeedback[pdfId], "materials.downloadFailed");
+  native.setTransfer(async (file) => { native.files.set(file.uri, native.pdf); });
+  await props.onDownload(props.materials[0]);
+  props = screen(Materials);
+  assert.equal(props.downloadedMaterialIds.join(), pdfId);
+  assert.equal(props.pdfFeedback[pdfId], "materials.pdfSaved");
+  props.onBack();
+  props = await select();
+  assert.equal(props.downloadedMaterialIds.join(), pdfId);
+  await props.onView(props.materials[0]);
+  assert.equal(native.previews.length, 1);
+  native.files.clear();
+  await props.onView(props.materials[0]);
+  assert.equal(screen(Materials).downloadedMaterialIds.length, 0);
+  assert.equal(screen(Materials).pdfFeedback[pdfId], "materials.pdfUnavailable");
+  env.unmount();
+});
+
+test("Materials cards localize PDF actions and downloaded filtering uses saved IDs", () => {
+  const env = environment(), Materials = env.load("components/LearningMaterialsScreen.js").default;
+  const material = { id: pdfId, title: "Notes", fileType: "pdf" };
+  const other = { id: "3".repeat(24), title: "Document", fileType: "document" };
+  const opened = [], requested = [];
+  const renderList = (overrides) => all(env.render(() => Materials({ materials: [material, other],
+    onDownload: (item) => requested.push(item), onView: (item) => opened.push(item), ...overrides })))
+    .find((node) => node.type === "FlatList").props;
+  const display = (list, index = 0) => {
+    const card = list.renderItem({ item: list.data[index] });
+    return card.type(card.props);
+  };
+  let list = renderList();
+  all(display(list)).find((node) => node.type === "Pressable").props.onPress();
+  assert.equal(requested[0], material);
+  assert.equal(all(display(list, 1)).some((node) => node.type === "Pressable"), false);
+  assert.match(text(display(renderList({ pdfFeedback: { [pdfId]: "materials.downloading" } }))), /Downloading/);
+  assert.match(text(display(renderList({ pdfFeedback: { [pdfId]: "materials.downloadFailed" } }))), /Download failed.*Retry/);
+  button(list.ListHeaderComponent, "Downloaded").props.onPress();
+  assert.equal(renderList().data.length, 0);
+  env.setLocale("si");
+  list = renderList({ downloadedMaterialIds: [pdfId], pdfFeedback: { [pdfId]: "materials.pdfSaved" } });
+  assert.equal(list.data.length, 1);
+  const card = display(list);
+  const sinhala = env.load("localization/i18n.js").createI18n("si");
+  assert.ok(text(card).includes(sinhala.t("materials.pdfSaved")));
+  assert.ok(text(card).includes(sinhala.t("materials.openPdf")));
+  all(card).find((node) => node.type === "Pressable").props.onPress();
+  assert.equal(opened[0], material);
 });

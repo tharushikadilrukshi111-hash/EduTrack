@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   StyleSheet,
@@ -10,6 +9,7 @@ import {
 import { useLanguage } from "../context/LanguageContext";
 import { LocalizedText, LocalizedTextInput } from "./LocalizedTypography";
 import LanguageSwitcher from "./LanguageSwitcher";
+import { isPdfMaterial } from "../api/studentPdfDownloads";
 
 const COLORS = {
   canvas: "#F4F7FB",
@@ -47,10 +47,14 @@ function isValidMaterialList(materials) {
   return true;
 }
 
-function MaterialCard({ material, onView, onDownload }) {
+function MaterialCard({ material, saved, feedback, onView, onDownload }) {
   const { t } = useLanguage();
-  const canView = typeof onView === "function";
-  const canDownload = typeof onDownload === "function";
+  const pdf = isPdfMaterial(material);
+  const canView = pdf && saved && typeof onView === "function";
+  const canDownload = pdf && !saved && typeof onDownload === "function";
+  const downloading = feedback === "materials.downloading";
+  const actionKey = canView ? "materials.openPdf" : feedback === "materials.downloadFailed"
+    ? "common.retry" : "materials.download";
   const metadata = [
     hasText(material.fileType) && material.fileType.trim().toUpperCase(),
     hasText(material.fileSizeLabel) && material.fileSizeLabel.trim(),
@@ -58,42 +62,30 @@ function MaterialCard({ material, onView, onDownload }) {
     hasText(material.updatedDateLabel) && t("materials.updated", { date: material.updatedDateLabel.trim() }),
   ].filter(Boolean).join(" · ");
 
-  function openActions() {
-    if (canView && canDownload) {
-      Alert.alert(material.title, t("materials.chooseAction"), [
-        { text: t("common.cancel"), style: "cancel" },
-        { text: t("materials.view"), onPress: () => onView(material) },
-        { text: t("materials.download"), onPress: () => onDownload(material) },
-      ], { cancelable: true });
-    } else if (canView) {
-      onView(material);
-    } else if (canDownload) {
-      onDownload(material);
-    }
-  }
-
-  const actionLabel = t(canView && canDownload ? "materials.readOrDownload" : canView ? "materials.view" : "materials.download");
-
   return (
     <View style={styles.card}>
       <LocalizedText style={styles.label}>{material.title}</LocalizedText>
       {hasText(material.description) && <LocalizedText style={styles.metadata}>{material.description}</LocalizedText>}
       {!!metadata && <LocalizedText style={styles.metadata}>{metadata}</LocalizedText>}
-      {(canView || canDownload) && (
+      {feedback && (
+        <View style={styles.feedback} accessibilityLiveRegion="polite">
+          {downloading && <ActivityIndicator color={COLORS.teal} />}
+          <LocalizedText style={styles.caption}>{t(feedback)}</LocalizedText>
+        </View>
+      )}
+      {!downloading && (canView || canDownload) && (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${actionLabel}: ${material.title}`}
+          accessibilityLabel={`${t(actionKey)}: ${material.title}`}
           hitSlop={10}
-          onPress={openActions}
+          onPress={() => (canView ? onView : onDownload)(material)}
           style={styles.action}
         >
-          <LocalizedText style={styles.actionText}>{actionLabel} →</LocalizedText>
+          <LocalizedText style={styles.actionText}>{t(actionKey)} →</LocalizedText>
         </Pressable>
       )}
-      {(!canView || !canDownload) && (
-        <LocalizedText style={styles.caption}>
-          {t(canView ? "materials.downloadUnavailable" : canDownload ? "materials.viewUnavailable" : "materials.actionsUnavailable")}
-        </LocalizedText>
+      {!canView && !canDownload && (
+        <LocalizedText style={styles.caption}>{t("materials.actionsUnavailable")}</LocalizedText>
       )}
     </View>
   );
@@ -107,6 +99,7 @@ export default function LearningMaterialsScreen({
   status = materials == null ? "idle" : "success",
   errorKey,
   downloadedMaterialIds = [],
+  pdfFeedback = {},
   onBack,
   onView,
   onDownload,
@@ -174,7 +167,13 @@ export default function LearningMaterialsScreen({
         data={visibleMaterials}
         keyExtractor={(material) => material.id}
         renderItem={({ item }) => (
-          <MaterialCard material={item} onView={onView} onDownload={onDownload} />
+          <MaterialCard
+            material={item}
+            saved={downloadedIds.has(item.id)}
+            feedback={pdfFeedback[item.id]}
+            onView={onView}
+            onDownload={onDownload}
+          />
         )}
         ListHeaderComponent={(
           <View>
@@ -279,6 +278,7 @@ const styles = StyleSheet.create({
   },
   metadata: { color: COLORS.muted, fontSize: 15, lineHeight: 22 },
   caption: { color: COLORS.muted, fontSize: 12, lineHeight: 18 },
+  feedback: { flexDirection: "row", alignItems: "center", gap: 8 },
   action: { alignSelf: "flex-start", justifyContent: "center", minHeight: 24 },
   actionText: { color: COLORS.teal, fontSize: 12, fontWeight: "600", lineHeight: 18 },
 });
