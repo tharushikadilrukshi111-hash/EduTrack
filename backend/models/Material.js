@@ -45,11 +45,16 @@ const materialSchema = new mongoose.Schema(
       required: [true, 'Class is required']
     },
 
-    uploadedBy: {
+        uploadedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: [true, 'Uploader is required']
-    }
+    },
+
+    originalName: { type: String, trim: true, maxlength: 255 },
+    storedName: { type: String, trim: true },
+    mimeType: { type: String, trim: true },
+    size: { type: Number, min: 0 }
   },
   {
     timestamps: true
