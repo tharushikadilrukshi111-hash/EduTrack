@@ -369,7 +369,7 @@ test("logout failure and Teacher session-read errors translate without losing th
   assert.ok(text(env.render(AppContent)).includes(tr.t("dashboard.teacher")));
 });
 
-test("combined Student routes keep QR and Materials offline and support both Back paths", async () => {
+test("Student dashboard keeps QR offline and prompts for a class before fetching materials", async () => {
   const env = environment(), { AppContent, user } = await authenticatedDashboard(env, "student");
   const Classes = env.load("components/MyClassesScreen.js").default;
   const QR = env.load("components/StudentQRCardScreen.js").default;
@@ -537,7 +537,7 @@ test("combined My Classes validates malformed results and preserves localized Re
   assert.equal(all(tree).some((n) => n.type === "TouchableOpacity" && text(n) === "Retry"), false);
 });
 
-test("combined materials screen stays unavailable with empty native list and no fake downloads", () => {
+test("Materials without a selection prompt for a class in both languages", () => {
   const env = environment(), Materials = env.load("components/LearningMaterialsScreen.js").default;
   for (const locale of ["en", "si"]) {
     env.setLocale(locale);
@@ -549,6 +549,144 @@ test("combined materials screen stays unavailable with empty native list and no 
     assert.equal(all(tree).some((n) => n.type === "ScrollView"), false);
     assert.equal(all(list.props.ListHeaderComponent).find((n) => n.type === "TextInput").props.value, "");
   }
+});
+
+test("Materials adapter authenticates, scopes rows, and maps metadata from the actual contract", async () => {
+  const env = environment();
+  const { fetchStudentMaterials } = env.load("api/studentMaterials.js");
+  const signal = new AbortController().signal;
+  const classId = "selected&class";
+  const options = { apiUrl: "http://test.invalid/", classId, readToken: async () => "student-token", signal };
+  const item = { id: "material", title: "Lesson", description: "Lesson notes", classId, fileType: "pdf",
+    size: 1536, createdAt: "2026-10-02T01:00:00.000Z", downloadUrl: "/api/materials/material/download" };
+  const respond = (...materials) => env.setResponse({ ok: true, json: async () => ({ count: materials.length, materials }) });
+  respond(item, { id: "older-record", title: "Older notes", classId });
+  const result = await fetchStudentMaterials(options);
+  assert.equal(result.status, "success");
+  assert.equal(result.materials.length, 2);
+  const first = result.materials[0];
+  assert.equal(first.description, "Lesson notes");
+  assert.equal(first.fileType, "pdf");
+  assert.equal(first.fileSizeLabel, "1.5 KB");
+  assert.equal(first.addedDateLabel, "2026-10-02");
+  assert.equal(first.downloadUrl, undefined);
+  assert.equal(result.materials[1].fileSizeLabel, undefined);
+  assert.equal(env.requests[0].url, "http://test.invalid/api/materials?classId=selected%26class");
+  assert.equal(env.requests[0].options.method, "GET");
+  assert.equal(env.requests[0].options.headers.Authorization, "Bearer student-token");
+  assert.equal(env.requests[0].options.signal, signal);
+  respond();
+  const empty = await fetchStudentMaterials(options);
+  assert.equal(empty.status, "success");
+  assert.equal(empty.materials.length, 0);
+
+  for (const payload of [null, { materials: [] }, { count: 1, materials: [] },
+    { count: 2, materials: [item, item] }, { count: 1, materials: [null] },
+    ...[{ classId: "different" }, { title: " " }, { createdAt: "invalid" }, { size: -1 }]
+      .map((invalid) => ({ count: 1, materials: [{ ...item, ...invalid }] }))]) {
+    env.setResponse({ ok: true, json: async () => payload });
+    assert.equal((await fetchStudentMaterials(options)).errorKey, "materials.invalidResponse");
+  }
+  env.setResponse({ ok: true, json: async () => { throw new SyntaxError(); } });
+  assert.equal((await fetchStudentMaterials(options)).errorKey, "materials.invalidResponse");
+  for (const [status, errorKey] of [[401, "auth.sessionExpired"], [403, "materials.accessDenied"],
+    [404, "materials.notFound"], [500, "materials.error"]]) {
+    env.setResponse({ status, ok: false });
+    assert.equal((await fetchStudentMaterials(options)).errorKey, errorKey);
+  }
+  env.setResponse(() => { throw new Error("network error"); });
+  assert.equal((await fetchStudentMaterials(options)).errorKey, "materials.connectionError");
+  const count = env.requests.length;
+  assert.equal((await fetchStudentMaterials({ ...options, readToken: async () => null })).errorKey, "auth.noSavedSession");
+  const controller = new AbortController();
+  assert.equal(await fetchStudentMaterials({ ...options, signal: controller.signal, readToken: async () => {
+    controller.abort();
+    return "student-token";
+  } }), undefined);
+  assert.equal(env.requests.length, count);
+});
+
+test("Materials retries for the selected class and ignores late results after navigation and logout", async () => {
+  const env = environment(), { AppContent } = await authenticatedDashboard(env, "student");
+  const Classes = env.load("components/MyClassesScreen.js").default;
+  const Materials = env.load("components/LearningMaterialsScreen.js").default;
+  const classes = [{ id: "first", name: "First class" }, { id: "second", name: "Second class" }];
+  const readScreen = (Component) => all(env.render(AppContent)).find((node) => node.type === Component)?.props;
+  const select = async (id) => {
+    readScreen(Classes);
+    await tick();
+    const list = readScreen(Classes);
+    list.onSelectClass(list.classes.find((item) => item.id === id));
+    assert.equal(readScreen(Materials).status, "loading");
+    await tick();
+  };
+  let resolveOld, resolveBeforeLogout, secondRequests = 0;
+  env.setResponse((url) => {
+    if (url.endsWith("/api/classes")) return { ok: true, json: async () => ({ count: 2, classes }) };
+    if (url.endsWith("classId=first")) return new Promise((resolve) => { resolveOld = resolve; });
+    assert.ok(url.endsWith("classId=second"));
+    secondRequests++;
+    if (secondRequests === 1) return { ok: false, status: 403 };
+    if (secondRequests === 3) return new Promise((resolve) => { resolveBeforeLogout = resolve; });
+    return { ok: true, json: async () => ({ count: 0, materials: [] }) };
+  });
+  button(env.render(AppContent), "My Classes").props.onPress();
+  await select("first");
+  const firstRequest = env.requests.at(-1);
+  assert.equal(firstRequest.options.headers.Authorization, "Bearer test-token");
+  assert.equal(env.hardwareBack(), true);
+  await select("second");
+  assert.equal(firstRequest.options.signal.aborted, true);
+  const failed = readScreen(Materials);
+  assert.equal(failed.status, "error");
+  assert.equal(failed.errorKey, "materials.accessDenied");
+  failed.onRetry();
+  assert.equal(readScreen(Materials).status, "loading");
+  await tick();
+  resolveOld({ ok: true, json: async () => ({ count: 1, materials: [{ id: "old", title: "Old", classId: "first" }] }) });
+  await tick();
+  assert.equal(readScreen(Materials).selectedClass.id, "second");
+  assert.equal(readScreen(Materials).status, "success");
+  assert.equal(readScreen(Materials).materials.length, 0);
+
+  assert.equal(env.hardwareBack(), true);
+  await select("second");
+  const pending = env.requests.at(-1);
+  assert.equal(env.hardwareBack(), true);
+  readScreen(Classes);
+  assert.equal(env.hardwareBack(), true);
+  await button(env.render(AppContent), "Log out").props.onPress();
+  assert.equal(pending.options.signal.aborted, true);
+  resolveBeforeLogout({ ok: true, json: async () => ({ count: 1, materials: [{ id: "old-session", title: "Old session", classId: "second" }] }) });
+  await tick();
+  assert.equal(readScreen(Materials), undefined);
+  button(env.render(AppContent), "Get started");
+  env.unmount();
+});
+
+test("Materials shows descriptions and metadata, supports Search and distinguishes empty states", () => {
+  const env = environment(), Materials = env.load("components/LearningMaterialsScreen.js").default;
+  const items = [{ id: "one", title: "Topic", description: "Find this note", fileType: "pdf", fileSizeLabel: "1 KB", addedDateLabel: "2026-10-02" }];
+  const list = (props) => all(env.render(() => Materials(props))).find((node) => node.type === "FlatList").props;
+  let view = list({ materials: items });
+  const item = view.renderItem({ item: view.data[0] });
+  const card = item.type(item.props);
+  assert.match(text(card), /Topic.*Find this note.*PDF.*1 KB.*Added 2026-10-02/);
+  assert.equal(all(card).some((node) => node.type === "Pressable"), false);
+  const search = all(view.ListHeaderComponent).find((node) => node.type === "TextInput");
+  search.props.onChangeText("this note");
+  assert.equal(list({ materials: items }).data.length, 1);
+  search.props.onChangeText("missing");
+  assert.match(text(list({ materials: items }).ListEmptyComponent), /No materials match/);
+  button(view.ListHeaderComponent, "Downloaded").props.onPress();
+  assert.match(text(list({ materials: items }).ListEmptyComponent), /No downloaded materials/);
+  button(view.ListHeaderComponent, "All").props.onPress();
+  assert.match(text(list({ materials: [] }).ListEmptyComponent), /no learning materials for this class/);
+  let retries = 0;
+  view = list({ status: "error", errorKey: "materials.accessDenied", onRetry: () => { retries++; } });
+  assert.match(text(view.ListEmptyComponent), /do not have access/);
+  button(view.ListEmptyComponent, "Retry").props.onPress();
+  assert.equal(retries, 1);
 });
 
 test("combined Student-only controls are absent for Teachers", async () => {

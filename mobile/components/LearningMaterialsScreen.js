@@ -54,6 +54,7 @@ function MaterialCard({ material, onView, onDownload }) {
   const metadata = [
     hasText(material.fileType) && material.fileType.trim().toUpperCase(),
     hasText(material.fileSizeLabel) && material.fileSizeLabel.trim(),
+    hasText(material.addedDateLabel) && t("materials.added", { date: material.addedDateLabel.trim() }),
     hasText(material.updatedDateLabel) && t("materials.updated", { date: material.updatedDateLabel.trim() }),
   ].filter(Boolean).join(" · ");
 
@@ -76,6 +77,7 @@ function MaterialCard({ material, onView, onDownload }) {
   return (
     <View style={styles.card}>
       <LocalizedText style={styles.label}>{material.title}</LocalizedText>
+      {hasText(material.description) && <LocalizedText style={styles.metadata}>{material.description}</LocalizedText>}
       {!!metadata && <LocalizedText style={styles.metadata}>{metadata}</LocalizedText>}
       {(canView || canDownload) && (
         <Pressable
@@ -103,6 +105,7 @@ export default function LearningMaterialsScreen({
   selectedClass = null,
   materials = null,
   status = materials == null ? "idle" : "success",
+  errorKey,
   downloadedMaterialIds = [],
   onBack,
   onView,
@@ -112,7 +115,7 @@ export default function LearningMaterialsScreen({
   const { t } = useLanguage();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
-  const className = [selectedClass?.subject, selectedClass?.name].find(hasText);
+  const className = [selectedClass?.name, selectedClass?.subject].find(hasText);
   const grade = selectedClass?.grade;
   const gradeLabel = Number.isFinite(grade) ? t("materials.grade", { grade }) : hasText(grade) ? grade.trim() : "";
   const classLabel = [className?.trim(), gradeLabel].filter(Boolean).join(" · ");
@@ -136,7 +139,7 @@ export default function LearningMaterialsScreen({
   if (status === "loading") {
     emptyMessage = t("materials.loading");
   } else if (failed) {
-    emptyMessage = t("materials.error");
+    emptyMessage = t(status === "error" ? errorKey || "materials.error" : "materials.invalidResponse");
   } else if (!validList) {
     emptyMessage = t("materials.unavailable");
   } else if (filteredMaterials.length === 0) {

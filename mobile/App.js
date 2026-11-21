@@ -7,6 +7,7 @@ import { LocalizedText, LocalizedTextInput } from "./components/LocalizedTypogra
 import StudentDashboard from "./components/StudentDashboard";
 import MyClassesScreen from "./components/MyClassesScreen";
 import { fetchStudentClasses, isValidClassList } from "./api/studentClasses";
+import { fetchStudentMaterials } from "./api/studentMaterials";
 import StudentQRCardScreen from "./components/StudentQRCardScreen";
 import LearningMaterialsScreen from "./components/LearningMaterialsScreen";
 import {
@@ -88,12 +89,15 @@ function AppContent() {
   const [selectedClass, setSelectedClass] = useState(null);
   const [classList, setClassList] = useState(null);
   const [classAttempt, setClassAttempt] = useState(0);
+  const [materialList, setMaterialList] = useState(null);
+  const [materialAttempt, setMaterialAttempt] = useState(0);
   const [teacherData, setTeacherData] = useState(null);
   const [teacherLoading, setTeacherLoading] = useState(false);
   const [teacherError, setTeacherError] = useState("");
   const [sessionError, setSessionError] = useState("");
   const sessionCheck = useRef(0);
   const studentId = role === "student" && user?.role === "student" ? user.id : null;
+  const materialClassId = page === "learningMaterials" ? selectedClass?.id : null;
 
   useEffect(() => {
     if (page !== "myClasses" || !studentId) return;
@@ -121,6 +125,36 @@ function AppContent() {
       controller.abort();
     };
   }, [page, studentId, classAttempt]);
+
+  useEffect(() => {
+    if (!materialClassId || !studentId) return;
+
+    const session = sessionCheck.current;
+    const controller = new AbortController();
+    const isCurrent = () => !controller.signal.aborted && sessionCheck.current === session;
+    const publish = (result) => setMaterialList({
+      classId: materialClassId, studentId, session, attempt: materialAttempt, result,
+    });
+    const timeout = setTimeout(() => {
+      if (isCurrent()) publish({ status: "error", errorKey: "materials.connectionError" });
+      controller.abort();
+    }, 10000);
+
+    fetchStudentMaterials({
+      apiUrl: API_URL,
+      classId: materialClassId,
+      readToken: () => SecureStore.getItemAsync("edutrack_token"),
+      signal: controller.signal,
+    }).then((result) => {
+      clearTimeout(timeout);
+      if (isCurrent()) publish(result);
+    });
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [materialClassId, studentId, materialAttempt]);
 
   useEffect(() => {
     setSelectedClass(null);
@@ -378,6 +412,7 @@ function AppContent() {
   function goBackFromStudentPage() {
     setSelectedClass(null);
     setClassList(null);
+    setMaterialList(null);
     setPage(page === "learningMaterials" ? "myClasses" : "dashboard");
   }
 
@@ -391,6 +426,7 @@ function AppContent() {
   function selectStudentClass(classItem) {
     if (page !== "myClasses" || role !== "student" || user?.role !== "student") return;
     if (!isValidClassList([classItem])) return;
+    setMaterialList(null);
     setSelectedClass(classItem);
     setPage("learningMaterials");
   }
@@ -399,6 +435,9 @@ function AppContent() {
   const classResult = classList && classList.studentId === studentId &&
     classList.session === sessionCheck.current && classList.attempt === classAttempt
     ? classList.result : null;
+  const materialResult = materialList && materialList.classId === materialClassId &&
+    materialList.studentId === studentId && materialList.session === sessionCheck.current &&
+    materialList.attempt === materialAttempt ? materialList.result : null;
   const showLearningMaterials = page === "learningMaterials" && role === "student" && user?.role === "student";
 
   return (
@@ -414,7 +453,8 @@ function AppContent() {
             <LearningMaterialsScreen
               key={selectedClass?.id || "unselected"}
               selectedClass={selectedClass}
-              status="idle"
+              {...(materialResult || { status: materialClassId ? "loading" : "idle" })}
+              onRetry={() => setMaterialAttempt(materialAttempt + 1)}
               onBack={goBackFromStudentPage}
             />
           </View>
