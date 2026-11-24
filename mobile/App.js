@@ -37,7 +37,8 @@ import {
 import StudentListScreen from "./screens/teacher/StudentListScreen";
 import AddStudentScreen from "./screens/teacher/AddStudentScreen";
 import ClassListScreen from "./screens/teacher/ClassListScreen";
-import AddClassScreen from "./screens/teacher/AddClassScreen";
+import MaterialManagementScreen from "./screens/teacher/MaterialManagementScreen";
+import UploadMaterialScreen from "./screens/teacher/UploadMaterialScreen";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const BLUE = "#173B64";
@@ -101,6 +102,7 @@ export default function App() {
 function AppContent() {
   const { t } = useLanguage();
   const [page, setPage] = useState("checkingSession");
+  const [materialClass, setMaterialClass] = useState(null);
   const [role, setRole] = useState("student");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -629,7 +631,14 @@ function AppContent() {
       >
        {user?.role === "teacher" &&
 role === "teacher" &&
-["studentList", "addStudent", "classList", "addClass"].includes(page) ? (
+[
+  "studentList",
+  "addStudent",
+  "classList",
+  "addClass",
+  "materialManagement",
+  "uploadMaterial",
+].includes(page) ? (
   <View style={styles.materialsScreen}>
 
     {page === "studentList" && (
@@ -671,6 +680,24 @@ role === "teacher" &&
         onBack={() => setPage("classList")}
       />
     )}
+    {page === "materialManagement" && (
+  <MaterialManagementScreen
+    onBack={() => setPage("dashboard")}
+    onUpload={(item) => {
+      setMaterialClass(item);
+      setPage("uploadMaterial");
+    }}
+  />
+)}
+
+{page === "uploadMaterial" && (
+  <UploadMaterialScreen
+    selectedClass={materialClass}
+    onBack={() => setPage("materialManagement")}
+  />
+)}
+
+
 
   </View>
 ) : showLearningMaterials ? (
@@ -1087,6 +1114,12 @@ role === "teacher" &&
     title="Manage Classes"
     onPress={() => setPage("classList")}
   />
+
+  <Button
+  title="Manage Materials"
+  onPress={() => setPage("materialManagement")}
+  />
+
 </View>
 
 <Button
