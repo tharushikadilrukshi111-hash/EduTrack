@@ -32,9 +32,18 @@ const userSchema = new mongoose.Schema(
       match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email address']
     },
 
-    passwordHash: {
+       passwordHash: {
       type: String,
       required: [true, 'Password hash is required']
+    },
+
+    language: {
+      type: String,
+      enum: {
+        values: ['en', 'si'],
+        message: 'Language must be "en" or "si"'
+      },
+      default: 'en'
     }
   },
   {
