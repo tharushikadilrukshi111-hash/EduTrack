@@ -14,6 +14,10 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import StudentListScreen from "./screens/teacher/StudentListScreen";
+import AddStudentScreen from "./screens/teacher/AddStudentScreen";
+import ClassListScreen from "./screens/teacher/ClassListScreen";
+import AddClassScreen from "./screens/teacher/AddClassScreen";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 const BLUE = "#173B64";
@@ -544,6 +548,22 @@ export default function App() {
                 </View>
               )}
 
+              {role === "teacher" && user.role === "teacher" && (
+                <View style={styles.roleCard}>
+                    <Text style={styles.cardTitle}>Teacher Management</Text>
+
+                  <Button
+                    title="Manage Students"
+                    onPress={() => setPage("studentList")}
+                  />
+
+                  <Button
+                    title="Manage Classes"
+                    onPress={() => setPage("classList")}
+                  />
+                </View>
+              )}
+
               <Button
                 title="Log out"
                 onPress={async () => {
@@ -565,6 +585,35 @@ export default function App() {
             </View>
           )}
         </ScrollView>
+
+          {user?.role === "teacher" && role === "teacher" && (
+            <>
+             {page === "studentList" && (
+              <StudentListScreen
+                onAddStudent={() => setPage("addStudent")}
+              />
+              )}
+
+            {page === "addStudent" && (
+              <AddStudentScreen
+                onBack={() => setPage("studentList")}
+              />
+            )}
+
+            {page === "classList" && (
+              <ClassListScreen
+                onAddClass={() => setPage("addClass")}
+              />
+            )}
+
+           {page === "addClass" && (
+              <AddClassScreen
+                onBack={() => setPage("classList")}
+              />
+            )}
+            </>
+        )}
+
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
