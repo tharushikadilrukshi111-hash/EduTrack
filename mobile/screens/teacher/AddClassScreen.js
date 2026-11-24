@@ -1,80 +1,114 @@
 
 import React, { useState } from "react";
 import {
-  View,
   Text,
   TextInput,
-  TouchableOpacity,
   ScrollView,
+  TouchableOpacity,
   Alert,
+  ActivityIndicator,
   StyleSheet,
 } from "react-native";
 
-export default function AddClassScreen({ onBack }) {
-  const [className, setClassName] = useState("");
-  const [subject, setSubject] = useState("");
-  const [grade, setGrade] = useState("");
+import { createClass } from "../../api/teacherClasses";
 
-  function handleSave() {
-    if (!className.trim() || !subject.trim() || !grade.trim()) {
-      Alert.alert(
-        "Missing Information",
-        "Please fill in all fields."
-      );
-      return;
+export default function AddClassScreen({ onBack }) {
+  const [name, setName] = useState("");
+  const [subject, setSubject] = useState("");
+  const [description, setDescription] = useState("");
+  const [fee, setFee] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function saveClass() {
+    if (!name.trim() || !subject.trim() || !fee.trim()) {
+      return Alert.alert("Error", "Fill all required fields.");
     }
 
-    Alert.alert(
-      "Form Validated",
-      "Class details are ready to send to the backend."
-    );
+    if (!Number.isFinite(Number(fee)) || Number(fee) < 0) {
+      return Alert.alert("Error", "Enter a valid fee.");
+    }
+
+    setLoading(true);
+
+    try {
+      await createClass({
+        name: name.trim(),
+        subject: subject.trim(),
+        description: description.trim(),
+        fee: Number(fee),
+        schedule: [],
+      });
+
+      Alert.alert(
+        "Success",
+        "Class created successfully.",
+        [{ text: "OK", onPress: onBack }],
+        { cancelable: false }
+      );
+    } catch (err) {
+      Alert.alert("Error", err.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
-      <TouchableOpacity onPress={onBack}>
-        <Text style={styles.back}>← Back to Classes</Text>
-      </TouchableOpacity>
+      <Text style={styles.back} onPress={loading ? undefined : onBack}>
+        ← Back to Classes
+      </Text>
 
       <Text style={styles.title}>Create New Class</Text>
 
-      <Text style={styles.subtitle}>
-        Enter the details of your new class.
-      </Text>
-
-      <Text style={styles.label}>Class Name</Text>
+      <Text style={styles.label}>Class Name *</Text>
       <TextInput
         style={styles.input}
-        placeholder="e.g. Grade 10 Mathematics"
-        value={className}
-        onChangeText={setClassName}
+        placeholder="Grade 10 Mathematics"
+        value={name}
+        onChangeText={setName}
+        maxLength={100}
       />
 
-      <Text style={styles.label}>Subject</Text>
+      <Text style={styles.label}>Subject *</Text>
       <TextInput
         style={styles.input}
-        placeholder="e.g. Mathematics"
+        placeholder="Mathematics"
         value={subject}
         onChangeText={setSubject}
       />
 
-      <Text style={styles.label}>Grade</Text>
+      <Text style={styles.label}>Description</Text>
+      <TextInput
+        style={[styles.input, { height: 90 }]}
+        placeholder="Enter class description"
+        value={description}
+        onChangeText={setDescription}
+        multiline
+        maxLength={500}
+      />
+
+      <Text style={styles.label}>Class Fee (Rs.) *</Text>
       <TextInput
         style={styles.input}
-        placeholder="e.g. Grade 10"
-        value={grade}
-        onChangeText={setGrade}
+        placeholder="1500"
+        value={fee}
+        onChangeText={setFee}
+        keyboardType="decimal-pad"
       />
 
       <TouchableOpacity
         style={styles.button}
-        onPress={handleSave}
+        onPress={saveClass}
+        disabled={loading}
       >
-        <Text style={styles.buttonText}>Save Class</Text>
+        {loading ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <Text style={styles.buttonText}>Save Class</Text>
+        )}
       </TouchableOpacity>
     </ScrollView>
   );
@@ -83,31 +117,23 @@ export default function AddClassScreen({ onBack }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F4F7FB",
-  },
-  content: {
     padding: 20,
-    paddingBottom: 40,
+    backgroundColor: "#F4F7FB",
   },
   back: {
     color: "#078692",
-    fontWeight: "700",
+    fontWeight: "bold",
     marginBottom: 20,
   },
   title: {
     fontSize: 24,
     fontWeight: "bold",
     color: "#173B64",
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#718198",
-    marginTop: 8,
-    marginBottom: 20,
+    marginBottom: 15,
   },
   label: {
+    fontWeight: "bold",
     color: "#173B64",
-    fontWeight: "700",
     marginTop: 15,
     marginBottom: 8,
   },
@@ -116,14 +142,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#DEE7EF",
     borderRadius: 10,
-    padding: 14,
+    padding: 15,
   },
   button: {
     backgroundColor: "#078692",
-    padding: 16,
+    padding: 17,
     borderRadius: 10,
     alignItems: "center",
-    marginTop: 30,
+    marginVertical: 25,
   },
   buttonText: {
     color: "#FFFFFF",
